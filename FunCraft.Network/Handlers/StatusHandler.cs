@@ -1,6 +1,5 @@
 ﻿using System.Buffers;
 using System.Text.Json;
-using Microsoft.Extensions.Logging;
 
 namespace FunCraft.Network.Handlers
 {
@@ -25,7 +24,7 @@ namespace FunCraft.Network.Handlers
                         new ServerDescription("A FunC#raft Server")
                     );
 
-                    var packet = new StatusResponse()
+                    var packet = new StatusResponse
                     {
                         JsonResponse = JsonSerializer.Serialize(status, ServerStatusContext.Default.ServerStatus)
                     };
@@ -34,8 +33,8 @@ namespace FunCraft.Network.Handlers
 
                 case PingRequest.Id:
                     var ping = new PingRequest();
-                    var span = payload.IsSingleSegment ? payload.FirstSpan : payload.ToArray(); // TODO fix
-                    ping.TryRead(span, out _);
+                    var reader = new SequenceReader<byte>(payload);
+                    ping.TryRead(ref reader);
                     await Sender.SendAsync(new PingResponse { Payload = ping.Payload }, ct);
                     break;
             }

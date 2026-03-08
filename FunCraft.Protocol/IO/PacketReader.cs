@@ -1,86 +1,84 @@
 ﻿using FunCraft.Protocol.Types;
-using System.Buffers.Binary;
+using System.Buffers;
 
 namespace FunCraft.Protocol.IO
 {
     public ref struct PacketReader
     {
-        private ReadOnlySpan<byte> _source;
-        public int BytesRead { get; private set; } = 0;
+        private SequenceReader<byte> _reader;
+        public readonly int BytesRead => (int)_reader.Consumed;
 
-        public PacketReader(ReadOnlySpan<byte> source)
+        public PacketReader(ref SequenceReader<byte> reader)
         {
-            _source = source;
-            BytesRead = 0;
+            _reader = reader;
         }
 
         public int ReadVarInt()
         {
-            if (!VarInt.TryRead(_source[BytesRead..], out var value, out var bytesRead))
+            if (!VarInt.TryRead(ref _reader, out var value))
             {
                 throw new InvalidDataException(nameof(VarInt));
             }
-
-            BytesRead += bytesRead;
             return value;
         }
 
         public long ReadLong()
         {
-            if (_source.Length - BytesRead < sizeof(long))
+            if (!_reader.TryReadBigEndian(out long value))
             {
                 throw new InvalidDataException(nameof(Int64));
             }
-
-            var value = BinaryPrimitives.ReadInt64BigEndian(_source[BytesRead..]);
-            BytesRead += sizeof(long);
             return value;
         }
 
         public long ReadVarLong()
         {
-            if (!VarLong.TryRead(_source[BytesRead..], out var value, out var bytesRead))
+            if (!VarLong.TryRead(ref _reader, out var value))
             {
                 throw new InvalidDataException(nameof(VarLong));
             }
-
-            BytesRead += bytesRead;
             return value;
         }
 
         public ushort ReadUInt16()
         {
-            if (_source.Length - BytesRead < sizeof(ushort))
+            if (!_reader.TryReadBigEndian(out short value))
             {
                 throw new InvalidDataException(nameof(UInt16));
             }
-
-            var value = BinaryPrimitives.ReadUInt16BigEndian(_source[BytesRead..]);
-            BytesRead += sizeof(ushort);
-            return value;
+            return (ushort)value;
         }
 
         public string ReadString()
         {
-            if (!McString.TryRead(_source[BytesRead..], out var value, out var bytesRead))
+            if (!McString.TryRead(ref _reader, out var value))
             {
                 throw new InvalidDataException(nameof(String));
             }
-
-            BytesRead += bytesRead;
             return value;
         }
 
         public Guid ReadGuid()
         {
-            if (_source.Length - BytesRead < 16)
+            if (_reader.Remaining < 16)
             {
                 throw new InvalidDataException(nameof(Guid));
             }
+            Span<byte> bytes = stackalloc byte[16];
+            _reader.TryCopyTo(bytes);
+            _reader.Advance(16);
+            return new Guid(bytes);
+        }
 
-            var value = new Guid(_source[BytesRead..(BytesRead + 16)]);
-            BytesRead += 16;
-            return value;
+        public ReadOnlySpan<byte> ReadBytes(int length)
+        {
+            if (_reader.Remaining < length)
+            {
+                throw new InvalidDataException("Not enough bytes");
+            }
+            var span = _reader.CurrentSpan[..length];
+            _reader.Advance(length);
+            return span;
         }
     }
 }

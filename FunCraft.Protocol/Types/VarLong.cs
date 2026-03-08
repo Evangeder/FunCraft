@@ -1,4 +1,6 @@
-﻿namespace FunCraft.Protocol.Types
+﻿using System.Buffers;
+
+namespace FunCraft.Protocol.Types
 {
     public static class VarLong
     {
@@ -23,29 +25,26 @@
             return i;
         }
 
-        public static bool TryRead(ReadOnlySpan<byte> source, out long value, out int bytesRead)
+        public static bool TryRead(ref SequenceReader<byte> reader, out long value)
         {
-            ulong unsignedValue = 0;
-            for (var i = 0; i < MaxSize; i++)
+            value = 0;
+            var shift = 0;
+
+            while (shift < MaxSize * BitLength)
             {
-                if (i >= source.Length)
+                if (!reader.TryRead(out var b))
                 {
-                    value = 0;
-                    bytesRead = 0;
                     return false;
                 }
 
-                var b = source[i];
-                unsignedValue |= (ulong)(b & SegmentBits) << (i * BitLength);
+                value |= (long)(b & SegmentBits) << shift;
 
-                if ((b & ContinueBit) != 0)
+                if ((b & ContinueBit) == 0)
                 {
-                    continue;
+                    return true;
                 }
 
-                bytesRead = i + 1;
-                value = (long)unsignedValue;
-                return true;
+                shift += BitLength;
             }
 
             throw new OverflowException($"{nameof(VarLong)} exceeds maximum size.");

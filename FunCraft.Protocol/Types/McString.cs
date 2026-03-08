@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Buffers;
+using System.Text;
 
 namespace FunCraft.Protocol.Types
 {
@@ -12,17 +13,40 @@ namespace FunCraft.Protocol.Types
             return varIntSize + byteCount;
         }
 
-        public static bool TryRead(ReadOnlySpan<byte> source, out string value, out int bytesRead)
+        public static bool TryRead(ref SequenceReader<byte> reader, out string value)
         {
-            if (!VarInt.TryRead(source, out var valueLength, out var varIntSize))
+            value = string.Empty;
+
+            if (!VarInt.TryRead(ref reader, out var byteCount))
             {
-                value = string.Empty;
-                bytesRead = 0;
                 return false;
             }
 
-            value = Encoding.UTF8.GetString(source[varIntSize..(varIntSize + valueLength)]);
-            bytesRead = varIntSize + valueLength;
+            if (reader.Remaining < byteCount)
+            {
+                return false;
+            }
+
+            if (reader.UnreadSpan.Length >= byteCount)
+            {
+                value = Encoding.UTF8.GetString(reader.UnreadSpan[..byteCount]);
+                reader.Advance(byteCount);
+            }
+            else
+            {
+                var buffer = ArrayPool<byte>.Shared.Rent(byteCount);
+                try
+                {
+                    reader.TryCopyTo(buffer.AsSpan(0, byteCount));
+                    reader.Advance(byteCount);
+                    value = Encoding.UTF8.GetString(buffer, 0, byteCount);
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(buffer);
+                }
+            }
+
             return true;
         }
 

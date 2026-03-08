@@ -8,7 +8,7 @@ namespace FunCraft.Network.Server
 {
     using Connections;
 
-    public class MinecraftServer(IConfiguration config, ILogger<MinecraftServer> logger, ILoggerFactory loggerFactory) : BackgroundService
+    public class MinecraftServer(IConfiguration config, ILogger<MinecraftServer> logger) : BackgroundService
     {
         private readonly int _port = int.Parse(config["Server:Port"] ?? "25565");
 
@@ -40,7 +40,7 @@ namespace FunCraft.Network.Server
             }
         }
 
-        private async Task HandleConnectionAsync(Socket socket, CancellationToken ct)
+        private static async Task HandleConnectionAsync(Socket socket, CancellationToken ct)
         {
             await using var connection = new ClientConnection(socket);
             await connection.RunAsync(ct);

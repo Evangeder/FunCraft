@@ -1,4 +1,6 @@
-﻿namespace FunCraft.Protocol.Packets.Login
+﻿using System.Buffers;
+
+namespace FunCraft.Protocol.Packets.Login
 {
     using IO;
 
@@ -9,19 +11,17 @@
         public string PlayerName { get; private set; } = string.Empty;
         public Guid PlayerGuid { get; private set; }
 
-        public bool TryRead(ReadOnlySpan<byte> source, out int bytesRead)
+        public bool TryRead(ref SequenceReader<byte> reader)
         {
             try
             {
-                var reader = new PacketReader(source);
-                PlayerName = reader.ReadString();
-                PlayerGuid = reader.ReadGuid();
-                bytesRead = reader.BytesRead;
+                var packetReader = new PacketReader(ref reader);
+                PlayerName = packetReader.ReadString();
+                PlayerGuid = packetReader.ReadGuid();
                 return true;
             }
             catch (InvalidDataException)
             {
-                bytesRead = 0;
                 return false;
             }
         }

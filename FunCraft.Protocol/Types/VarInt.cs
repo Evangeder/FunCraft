@@ -25,34 +25,6 @@ namespace FunCraft.Protocol.Types
             return i;
         }
 
-        public static bool TryRead(ReadOnlySpan<byte> source, out int value, out int bytesRead)
-        {
-            uint unsignedValue = 0;
-            for (var i = 0; i < MaxSize; i++)
-            {
-                if (i >= source.Length)
-                {
-                    value = 0;
-                    bytesRead = 0;
-                    return false;
-                }
-
-                var b = source[i];
-                unsignedValue |= (uint) (b & SegmentBits) << (i * BitLength);
-
-                if ((b & ContinueBit) != 0)
-                {
-                    continue;
-                }
-
-                bytesRead = i + 1;
-                value = (int)unsignedValue;
-                return true;
-            }
-
-            throw new OverflowException($"{nameof(VarInt)} exceeds maximum size.");
-        }
-
         public static bool TryRead(ref SequenceReader<byte> reader, out int value)
         {
             value = 0;

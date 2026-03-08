@@ -16,9 +16,9 @@ namespace FunCraft.Network.Handlers
             }
 
             var packet = new HandshakePacket();
-            var span = payload.IsSingleSegment ? payload.FirstSpan : payload.ToArray(); // TODO: optimize multi-segment case
+            var reader = new SequenceReader<byte>(payload);
 
-            if (!packet.TryRead(span, out _))
+            if (!packet.TryRead(ref reader))
             {
                 // malformed packet
                 return ConnectionState.Handshaking;

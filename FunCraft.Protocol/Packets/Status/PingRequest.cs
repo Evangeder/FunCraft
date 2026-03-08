@@ -1,6 +1,7 @@
 ﻿namespace FunCraft.Protocol.Packets.Status
 {
     using IO;
+    using System.Buffers;
 
     public class PingRequest : IIncomingPacket
     {
@@ -8,18 +9,16 @@
 
         public long Payload { get; private set; }
 
-        public bool TryRead(ReadOnlySpan<byte> source, out int bytesRead)
+        public bool TryRead(ref SequenceReader<byte> reader)
         {
             try
             {
-                var reader = new PacketReader(source);
-                Payload = reader.ReadLong();
-                bytesRead = sizeof(long);
+                var packetReader = new PacketReader(ref reader);
+                Payload = packetReader.ReadLong();
                 return true;
             }
             catch (InvalidDataException)
             {
-                bytesRead = 0;
                 return false;
             }
         }

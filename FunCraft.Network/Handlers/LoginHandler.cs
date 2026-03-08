@@ -17,8 +17,9 @@ namespace FunCraft.Network.Handlers
             {
                 case LoginStartPacket.Id:
                     var login = new LoginStartPacket();
-                    var span = payload.IsSingleSegment ? payload.FirstSpan : payload.ToArray(); // TODO fix
-                    login.TryRead(span, out _);
+                    var reader = new SequenceReader<byte>(payload);
+
+                    login.TryRead(ref reader);
 
                     // TODO: decide if success or disconnect (because for example player is banned)
                     await Sender.SendAsync(new LoginSuccessPacket

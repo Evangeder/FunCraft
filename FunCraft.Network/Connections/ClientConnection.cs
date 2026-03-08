@@ -14,7 +14,7 @@ namespace FunCraft.Network.Connections
         private const byte LegacyPingPacket = 0xFE;
 
         private readonly Socket _socket;
-        private readonly Pipe _pipe = new Pipe();
+        private readonly Pipe _pipe = new();
 
         private readonly HandshakeHandler _handshakeHandler;
         private readonly StatusHandler _statusHandler;

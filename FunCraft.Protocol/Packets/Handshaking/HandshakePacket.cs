@@ -1,4 +1,6 @@
-﻿namespace FunCraft.Protocol.Packets.Handshaking
+﻿using System.Buffers;
+
+namespace FunCraft.Protocol.Packets.Handshaking
 {
     using IO;
 
@@ -11,22 +13,19 @@
         public ushort ServerPort { get; private set; }
         public int NextState { get; private set; }
 
-        public bool TryRead(ReadOnlySpan<byte> source, out int bytesRead)
+        public bool TryRead(ref SequenceReader<byte> reader)
         {
             try
             {
-                var reader = new PacketReader(source);
-                ProtocolVersion = reader.ReadVarInt();
-                ServerAddress = reader.ReadString();
-                ServerPort = reader.ReadUInt16();
-                NextState = reader.ReadVarInt();
-
-                bytesRead = reader.BytesRead;
+                var packetReader = new PacketReader(ref reader);
+                ProtocolVersion = packetReader.ReadVarInt();
+                ServerAddress = packetReader.ReadString();
+                ServerPort = packetReader.ReadUInt16();
+                NextState = packetReader.ReadVarInt();
                 return true;
             }
             catch (InvalidDataException)
             {
-                bytesRead = 0;
                 return false;
             }
         }

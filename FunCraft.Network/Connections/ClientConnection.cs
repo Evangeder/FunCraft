@@ -1,11 +1,9 @@
 ﻿using System.Buffers;
 using System.IO.Pipelines;
 using System.Net.Sockets;
-using Microsoft.Extensions.Logging;
 
 namespace FunCraft.Network.Connections
 {
-    using Server;
     using Protocol.Packets;
     using Protocol.Types;
     using Protocol.IO;
@@ -13,9 +11,10 @@ namespace FunCraft.Network.Connections
 
     public sealed class ClientConnection : IPacketSender, IAsyncDisposable
     {
+        private const byte LegacyPingPacket = 0xFE;
+
         private readonly Socket _socket;
         private readonly Pipe _pipe = new Pipe();
-        private readonly ILogger _logger;
 
         private readonly HandshakeHandler _handshakeHandler;
         private readonly StatusHandler _statusHandler;
@@ -23,10 +22,9 @@ namespace FunCraft.Network.Connections
 
         private ConnectionState _connectionState = ConnectionState.Handshaking;
 
-        public ClientConnection(Socket socket, ILogger<ClientConnection> logger)
+        public ClientConnection(Socket socket)
         {
             _socket = socket;
-            _logger = logger;
             _handshakeHandler = new HandshakeHandler();
             _statusHandler = new StatusHandler { Sender = this };
             _loginHandler = new LoginHandler { Sender = this };
@@ -34,86 +32,65 @@ namespace FunCraft.Network.Connections
 
         public async Task RunAsync(CancellationToken ct)
         {
-            try
-            {
-                await Task.WhenAll(FillPipeAsync(ct), ReadPipeAsync(ct));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Connection error");
-            }
+            await Task.WhenAll(FillPipeAsync(ct), ReadPipeAsync(ct));
         }
 
         private async Task FillPipeAsync(CancellationToken ct)
         {
-            try
+            while (!ct.IsCancellationRequested)
             {
-                while (!ct.IsCancellationRequested)
+                var buffer = _pipe.Writer.GetMemory(4096);
+                var bytesRead = await _socket.ReceiveAsync(buffer, ct);
+
+                if (bytesRead == 0)
                 {
-                    var buffer = _pipe.Writer.GetMemory(4096);
-                    var bytesRead = await _socket.ReceiveAsync(buffer, ct);
-
-                    if (bytesRead == 0)
-                    {
-                        break;
-                    }
-
-                    _pipe.Writer.Advance(bytesRead);
-                    var result = await _pipe.Writer.FlushAsync(ct);
-
-                    if (result.IsCompleted)
-                    {
-                        break;
-                    }
+                    break;
                 }
 
-                await _pipe.Writer.CompleteAsync();
+                _pipe.Writer.Advance(bytesRead);
+                var result = await _pipe.Writer.FlushAsync(ct);
+
+                if (result.IsCompleted)
+                {
+                    break;
+                }
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "FillPipeAsync error");
-            }
+
+            await _pipe.Writer.CompleteAsync();
         }
 
         private async Task ReadPipeAsync(CancellationToken ct)
         {
-            try
+            while (!ct.IsCancellationRequested)
             {
-                while (!ct.IsCancellationRequested)
+                var result = await _pipe.Reader.ReadAsync(ct);
+                var buffer = result.Buffer;
+
+                var consumed = buffer.Start;
+                var examined = buffer.End;
+
+                while (TryReadPacket(ref buffer, out var packetId, out var payload))
                 {
-                    var result = await _pipe.Reader.ReadAsync(ct);
-                    _logger.LogInformation("Pipe read - bytes available: {Bytes}", result.Buffer.Length);
-                    var buffer = result.Buffer;
-
-                    var consumed = buffer.Start;
-                    var examined = buffer.End;
-
-                    while (TryReadPacket(ref buffer, out var packetId, out var payload))
-                    {
-                        await HandlePacketAsync(packetId, payload, ct);
-                        consumed = buffer.Start;
-                    }
-
-                    _pipe.Reader.AdvanceTo(consumed, examined);
-
-                    if (result.IsCompleted)
-                    {
-                        break;
-                    }
+                    await HandlePacketAsync(packetId, payload, ct);
+                    consumed = buffer.Start;
                 }
 
-                await _pipe.Reader.CompleteAsync();
+                _pipe.Reader.AdvanceTo(consumed, examined);
+
+                if (result.IsCompleted)
+                {
+                    break;
+                }
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "ReadPipeAsync error");
-            }
+
+            await _pipe.Reader.CompleteAsync();
         }
 
         private bool TryReadPacket(ref ReadOnlySequence<byte> buffer, out int packetId,
             out ReadOnlySequence<byte> payload)
         {
-            if (buffer.Length > 0 && buffer.FirstSpan[0] == 0xFE)
+            
+            if (buffer.Length > 0 && buffer.FirstSpan[0] == LegacyPingPacket)
             {
                 buffer = buffer.Slice(buffer.Length);
                 packetId = 0;
@@ -121,25 +98,18 @@ namespace FunCraft.Network.Connections
                 return false;
             }
 
-            _logger.LogInformation("TryReadPacket - buffer length: {Len}", buffer.Length);
             packetId = 0;
             payload = default;
 
             var reader = new SequenceReader<byte>(buffer);
 
-            var firstBytes = buffer.Slice(0, Math.Min(4, buffer.Length)).ToArray();
-            _logger.LogInformation("First bytes: {Bytes}", BitConverter.ToString(firstBytes));
-
             if (!VarInt.TryRead(ref reader, out var length))
             {
-                _logger.LogInformation("Failed to read length VarInt");
                 return false;
             }
-            _logger.LogInformation("Packet length: {Len}, remaining: {Rem}", length, reader.Remaining);
 
             if (reader.Remaining < length)
             {
-                _logger.LogInformation("Not enough data, need {Need} have {Have}", length, reader.Remaining);
                 return false;
             }
 
@@ -162,7 +132,6 @@ namespace FunCraft.Network.Connections
 
         private ValueTask HandlePacketAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
         {
-            _logger.LogInformation("Packet received - State: {State}, PacketId: {Id}", _connectionState, packetId);
             return _connectionState switch
             {
                 ConnectionState.Handshaking => HandleHandshakingAsync(packetId, payload),
@@ -209,9 +178,6 @@ namespace FunCraft.Network.Connections
             var packetIdLength = VarInt.GetSize(packet.PacketId);
             var totalLength = payloadLength + packetIdLength;
             var frameLength = VarInt.GetSize(totalLength) + totalLength;
-
-            _logger.LogInformation("SendAsync - packetId:{Id} payloadLen:{Payload} totalLen:{Total} frameLen:{Frame}",
-                packet.PacketId, payloadLength, totalLength, frameLength);
 
             var buffer = ArrayPool<byte>.Shared.Rent(frameLength);
             try

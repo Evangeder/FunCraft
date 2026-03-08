@@ -42,7 +42,7 @@ namespace FunCraft.Network.Server
 
         private async Task HandleConnectionAsync(Socket socket, CancellationToken ct)
         {
-            await using var connection = new ClientConnection(socket, loggerFactory.CreateLogger<ClientConnection>());
+            await using var connection = new ClientConnection(socket);
             await connection.RunAsync(ct);
         }
     }

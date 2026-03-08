@@ -16,20 +16,20 @@ namespace FunCraft.Network.Connections
         private readonly Socket _socket;
         private readonly Pipe _pipe = new();
 
-        private readonly HandshakeHandler _handshakeHandler;
         private readonly StatusHandler _statusHandler;
         private readonly LoginHandler _loginHandler;
         private readonly ConfigurationHandler _configurationHandler;
+        private readonly PlayHandler _playHandler;
 
         private ConnectionState _connectionState = ConnectionState.Handshaking;
 
         public ClientConnection(Socket socket)
         {
             _socket = socket;
-            _handshakeHandler = new HandshakeHandler();
             _statusHandler = new StatusHandler { Sender = this };
             _loginHandler = new LoginHandler { Sender = this };
             _configurationHandler = new ConfigurationHandler { Sender = this };
+            _playHandler = new PlayHandler { Sender = this };
         }
 
         public async Task RunAsync(CancellationToken ct)
@@ -132,48 +132,36 @@ namespace FunCraft.Network.Connections
             return true;
         }
 
-        private ValueTask HandlePacketAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
+        private async ValueTask HandlePacketAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
         {
-            return _connectionState switch
+            var previousState = _connectionState;
+
+            _connectionState = _connectionState switch
             {
-                ConnectionState.Handshaking => HandleHandshaking(packetId, payload),
-                ConnectionState.Status => HandleStatusAsync(packetId, payload, ct),
-                ConnectionState.Login => HandleLoginAsync(packetId, payload, ct),
-                ConnectionState.Play => HandlePlay(packetId, payload, ct),
-                _ => ValueTask.CompletedTask
+                ConnectionState.Handshaking => HandshakeHandler.Handle(packetId, payload),
+                ConnectionState.Status => await _statusHandler.HandleAsync(packetId, payload, ct),
+                ConnectionState.Login => await _loginHandler.HandleAsync(packetId, payload, ct),
+                ConnectionState.Configuration => _configurationHandler.Handle(packetId, payload),
+                ConnectionState.Play => await _playHandler.HandleAsync(packetId, payload, ct),
+                _ => _connectionState
             };
-        }
 
-        private ValueTask HandleHandshaking(int packetId, ReadOnlySequence<byte> payload)
-        {
-            _connectionState = HandshakeHandler.Handle(packetId, payload);
-            return ValueTask.CompletedTask;
-        }
-
-        private async ValueTask HandleStatusAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
-        {
-            _connectionState = await _statusHandler.HandleAsync(packetId, payload, ct);
-        }
-
-        private async ValueTask HandleLoginAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
-        {
-            var newState = await _loginHandler.HandleAsync(packetId, payload, ct);
-            if (newState != _connectionState)
+            if (_connectionState != previousState)
             {
-                _connectionState = newState;
-                await OnStateEntered(newState, ct);
+                await OnStateEnteredAsync(_connectionState, ct);
             }
         }
 
-        private ValueTask OnStateEntered(ConnectionState state, CancellationToken ct) => state switch
+        private async ValueTask OnStateEnteredAsync(ConnectionState state, CancellationToken ct)
         {
-            ConnectionState.Configuration => _configurationHandler.OnEnterAsync(ct),
-            _ => ValueTask.CompletedTask
-        };
+            switch (state)
+            {
+                case ConnectionState.Configuration:
+                    await _configurationHandler.OnEnterAsync(ct);
+                    break;
 
-        private ValueTask HandlePlay(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
-        {
-            return ValueTask.CompletedTask;
+                // more later
+            }
         }
 
         public async ValueTask DisposeAsync()

@@ -1,10 +1,12 @@
-﻿using FunCraft.Network.Server;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace FunCraft.Server
 {
+    using Network.Server;
+    using Protocol.Registry;
+
     internal class Program
     {
         private static async Task Main(string[] args)
@@ -23,6 +25,7 @@ namespace FunCraft.Server
                 })
                 .Build();
 
+            RegistryLoader.Load();
             await host.RunAsync();
         }
     }

@@ -64,5 +64,16 @@ namespace FunCraft.Protocol.IO
             _buffer[BytesWritten + 15] = bytes[15];
             BytesWritten += 16;
         }
+
+        public void WriteBoolean(bool value)
+        {
+            _buffer[BytesWritten++] = value ? (byte)1 : (byte)0;
+        }
+
+        public void WriteRawBytes(byte[] data)
+        {
+            data.AsSpan().CopyTo(_buffer[BytesWritten..]);
+            BytesWritten += data.Length;
+        }
     }
 }

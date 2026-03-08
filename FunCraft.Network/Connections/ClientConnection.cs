@@ -134,34 +134,15 @@ namespace FunCraft.Network.Connections
 
         private async ValueTask HandlePacketAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
         {
-            var previousState = _connectionState;
-
             _connectionState = _connectionState switch
             {
                 ConnectionState.Handshaking => HandshakeHandler.Handle(packetId, payload),
                 ConnectionState.Status => await _statusHandler.HandleAsync(packetId, payload, ct),
                 ConnectionState.Login => await _loginHandler.HandleAsync(packetId, payload, ct),
-                ConnectionState.Configuration => _configurationHandler.Handle(packetId, payload),
+                ConnectionState.Configuration => await _configurationHandler.HandleAsync(packetId, payload),
                 ConnectionState.Play => await _playHandler.HandleAsync(packetId, payload, ct),
                 _ => _connectionState
             };
-
-            if (_connectionState != previousState)
-            {
-                await OnStateEnteredAsync(_connectionState, ct);
-            }
-        }
-
-        private async ValueTask OnStateEnteredAsync(ConnectionState state, CancellationToken ct)
-        {
-            switch (state)
-            {
-                case ConnectionState.Configuration:
-                    await _configurationHandler.OnEnterAsync(ct);
-                    break;
-
-                // more later
-            }
         }
 
         public async ValueTask DisposeAsync()

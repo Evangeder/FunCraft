@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".gitignore" />
+    <File Path="README.MD" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="FunCraft.Network/FunCraft.Network.csproj" />
+    <Project Path="FunCraft.Protocol/FunCraft.Protocol.csproj" />
+    <Project Path="FunCraft.Server/FunCraft.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="FunCraft.Tests/FunCraft.Tests.csproj" />
+  </Folder>
+</Solution>

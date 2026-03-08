@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "FunCraft.Protocol": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}

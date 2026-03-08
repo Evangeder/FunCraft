@@ -20,7 +20,7 @@ namespace FunCraft.Network.Handlers
                     var span = payload.IsSingleSegment ? payload.FirstSpan : payload.ToArray(); // TODO fix
                     login.TryRead(span, out _);
 
-                    // decide if success or disconnect (because for example player is banned)
+                    // TODO: decide if success or disconnect (because for example player is banned)
                     await Sender.SendAsync(new LoginSuccessPacket
                     {
                         PlayerName = login.PlayerName,
@@ -28,7 +28,10 @@ namespace FunCraft.Network.Handlers
                         PropertyCount = 0
                     }, ct);
 
-                    return ConnectionState.Play;
+                    return ConnectionState.Login;
+                    
+                case LoginAcknowledgePacket.Id:
+                    return ConnectionState.Configuration;
 
                 default:
                     return ConnectionState.Login;

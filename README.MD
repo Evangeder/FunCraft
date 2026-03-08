@@ -36,7 +36,7 @@ FunCraft.sln
 dotnet run --project src/FunCraft.Server
 ```
 
-Then connect with Minecraft Java 1.20.1 to `localhost:25565`.
+Then connect with Minecraft Java 1.21.10 to `localhost:25565`.
 
 ## Roadmap
 

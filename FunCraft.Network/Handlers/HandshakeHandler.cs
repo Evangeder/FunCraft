@@ -1,13 +1,13 @@
 ﻿using System.Buffers;
-using FunCraft.Protocol.Packets.Handshaking;
 
 namespace FunCraft.Network.Handlers
 {
     using Protocol.Packets;
+    using Protocol.Packets.Handshaking;
 
     internal class HandshakeHandler
     {
-        internal ConnectionState Handle(int packetId, ReadOnlySequence<byte> payload)
+        internal static ConnectionState Handle(int packetId, ReadOnlySequence<byte> payload)
         {
             if (packetId != HandshakePacket.PacketId)
             {

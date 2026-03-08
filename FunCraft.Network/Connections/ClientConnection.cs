@@ -19,6 +19,7 @@ namespace FunCraft.Network.Connections
         private readonly HandshakeHandler _handshakeHandler;
         private readonly StatusHandler _statusHandler;
         private readonly LoginHandler _loginHandler;
+        private readonly ConfigurationHandler _configurationHandler;
 
         private ConnectionState _connectionState = ConnectionState.Handshaking;
 
@@ -28,6 +29,7 @@ namespace FunCraft.Network.Connections
             _handshakeHandler = new HandshakeHandler();
             _statusHandler = new StatusHandler { Sender = this };
             _loginHandler = new LoginHandler { Sender = this };
+            _configurationHandler = new ConfigurationHandler { Sender = this };
         }
 
         public async Task RunAsync(CancellationToken ct)
@@ -86,7 +88,7 @@ namespace FunCraft.Network.Connections
             await _pipe.Reader.CompleteAsync();
         }
 
-        private bool TryReadPacket(ref ReadOnlySequence<byte> buffer, out int packetId,
+        private static bool TryReadPacket(ref ReadOnlySequence<byte> buffer, out int packetId,
             out ReadOnlySequence<byte> payload)
         {
             
@@ -134,17 +136,17 @@ namespace FunCraft.Network.Connections
         {
             return _connectionState switch
             {
-                ConnectionState.Handshaking => HandleHandshakingAsync(packetId, payload),
+                ConnectionState.Handshaking => HandleHandshaking(packetId, payload),
                 ConnectionState.Status => HandleStatusAsync(packetId, payload, ct),
                 ConnectionState.Login => HandleLoginAsync(packetId, payload, ct),
-                ConnectionState.Play => HandlePlayAsync(packetId, payload, ct),
+                ConnectionState.Play => HandlePlay(packetId, payload, ct),
                 _ => ValueTask.CompletedTask
             };
         }
 
-        private ValueTask HandleHandshakingAsync(int packetId, ReadOnlySequence<byte> payload)
+        private ValueTask HandleHandshaking(int packetId, ReadOnlySequence<byte> payload)
         {
-            _connectionState = _handshakeHandler.Handle(packetId, payload);
+            _connectionState = HandshakeHandler.Handle(packetId, payload);
             return ValueTask.CompletedTask;
         }
 
@@ -155,12 +157,22 @@ namespace FunCraft.Network.Connections
 
         private async ValueTask HandleLoginAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
         {
-            _connectionState = await _loginHandler.HandleAsync(packetId, payload, ct);
+            var newState = await _loginHandler.HandleAsync(packetId, payload, ct);
+            if (newState != _connectionState)
+            {
+                _connectionState = newState;
+                await OnStateEntered(newState, ct);
+            }
         }
 
-        private ValueTask HandlePlayAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
+        private ValueTask OnStateEntered(ConnectionState state, CancellationToken ct) => state switch
         {
+            ConnectionState.Configuration => _configurationHandler.OnEnterAsync(ct),
+            _ => ValueTask.CompletedTask
+        };
 
+        private ValueTask HandlePlay(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
+        {
             return ValueTask.CompletedTask;
         }
 

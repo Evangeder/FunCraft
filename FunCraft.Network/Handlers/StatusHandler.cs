@@ -20,17 +20,15 @@ namespace FunCraft.Network.Handlers
             {
                 case StatusRequest.Id:
                     var status = new ServerStatus(
-                        new ServerVersion("1.20.1", 763),
+                        new ServerVersion("1.21.10", 773),
                         new ServerPlayers(100, 0),
-                        new ServerDescription("A FunCraft Server")
+                        new ServerDescription("A FunC#raft Server")
                     );
 
-                    var json = JsonSerializer.Serialize(status, ServerStatusContext.Default.ServerStatus);
                     var packet = new StatusResponse()
                     {
-                        JsonResponse = json
+                        JsonResponse = JsonSerializer.Serialize(status, ServerStatusContext.Default.ServerStatus)
                     };
-                    Console.WriteLine(json);
                     await Sender.SendAsync(packet, ct);
                     break;
 

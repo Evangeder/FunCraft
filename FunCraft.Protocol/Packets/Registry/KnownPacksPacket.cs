@@ -11,7 +11,7 @@
             VarInt.GetSize(1) +
             McString.GetSize("minecraft:core") +
             McString.GetSize("") +
-            McString.GetSize("1.21");
+            McString.GetSize("1.21.10");
 
         public void Write(Span<byte> destination, out int bytesWritten)
         {
@@ -19,7 +19,7 @@
             writer.WriteVarInt(1); // 1 pack
             writer.WriteString("minecraft:core");
             writer.WriteString(""); // id
-            writer.WriteString("1.21");
+            writer.WriteString("1.21.10");
             bytesWritten = writer.BytesWritten;
         }
     }

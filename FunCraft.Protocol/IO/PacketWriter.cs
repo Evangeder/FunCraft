@@ -75,5 +75,16 @@ namespace FunCraft.Protocol.IO
             data.AsSpan().CopyTo(_buffer[BytesWritten..]);
             BytesWritten += data.Length;
         }
+
+        public void WriteInt(int value)
+        {
+            BinaryPrimitives.WriteInt32BigEndian(_buffer[BytesWritten..], value);
+            BytesWritten += sizeof(int);
+        }
+
+        public void WriteByte(byte value)
+        {
+            _buffer[BytesWritten++] = value;
+        }
     }
 }

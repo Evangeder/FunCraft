@@ -4,14 +4,26 @@ namespace FunCraft.Network.Handlers
 {
     using Connections;
     using Protocol.Packets;
+    using Protocol.Packets.Play;
 
     internal class PlayHandler
     {
         internal required IPacketSender Sender { get; init; }
 
-        internal ValueTask<ConnectionState> HandleAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
+        internal async ValueTask OnEnterAsync(CancellationToken ct)
         {
-            return ValueTask.FromResult(ConnectionState.Play);
+            Console.WriteLine("PlayHandler::OnEnterAsync()");
+            await Sender.SendAsync(new LoginPlayPacket
+            {
+                EntityId = 1,
+                DimensionType = "minecraft:overworld",
+                DimensionName = "minecraft:overworld"
+            }, ct);
+        }
+
+        internal static ConnectionState Handle()
+        {
+            return ConnectionState.Play;
         }
     }
 }

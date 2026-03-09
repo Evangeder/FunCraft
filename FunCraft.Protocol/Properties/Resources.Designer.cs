@@ -59,5 +59,15 @@ namespace FunCraft.Protocol.Properties {
                 resourceCulture = value;
             }
         }
+        
+        /// <summary>
+        ///   Looks up a localized resource of type System.Byte[].
+        /// </summary>
+        public static byte[] registries {
+            get {
+                object obj = ResourceManager.GetObject("registries", resourceCulture);
+                return ((byte[])(obj));
+            }
+        }
     }
 }

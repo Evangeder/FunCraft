@@ -1,10 +1,11 @@
 <Solution>
   <Folder Name="/Solution Items/">
     <File Path=".gitignore" />
+    <File Path="MC_1.20.10_PacketProtocol.MD" />
     <File Path="README.MD" />
   </Folder>
   <Folder Name="/src/">
-    <Project Path="FunCraft.RegistryBuilder/FunCraft.RegistryBuilder.csproj" Id="e6034d8e-3bdd-415d-8b9a-abd608ac55a2" />
+    <Project Path="FunCraft.JsonSchemaGenerator/FunCraft.RegistryBuilder.csproj" Id="e6034d8e-3bdd-415d-8b9a-abd608ac55a2" />
     <Project Path="FunCraft.Network/FunCraft.Network.csproj" />
     <Project Path="FunCraft.Protocol/FunCraft.Protocol.csproj" />
     <Project Path="FunCraft.Server/FunCraft.Server.csproj" />

@@ -134,15 +134,38 @@ namespace FunCraft.Network.Connections
 
         private async ValueTask HandlePacketAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
         {
+            Console.WriteLine($"ClientConnection::HandlePacketAsync({packetId}, payload, ct)");
+
+            var previousState = _connectionState;
+
             _connectionState = _connectionState switch
             {
                 ConnectionState.Handshaking => HandshakeHandler.Handle(packetId, payload),
                 ConnectionState.Status => await _statusHandler.HandleAsync(packetId, payload, ct),
                 ConnectionState.Login => await _loginHandler.HandleAsync(packetId, payload, ct),
-                ConnectionState.Configuration => await _configurationHandler.HandleAsync(packetId, payload),
-                ConnectionState.Play => await _playHandler.HandleAsync(packetId, payload, ct),
+                ConnectionState.Configuration => await _configurationHandler.HandleAsync(packetId, ct),
+                ConnectionState.Play => PlayHandler.Handle(),
                 _ => _connectionState
             };
+
+            if (_connectionState != previousState)
+            {
+                await OnStateEnteredAsync(_connectionState, ct);
+            }
+        }
+
+        private async ValueTask OnStateEnteredAsync(ConnectionState state, CancellationToken ct)
+        {
+            switch (state)
+            {
+                case ConnectionState.Play:
+                    await _playHandler.OnEnterAsync(ct);
+                    break;
+
+                case ConnectionState.Configuration:
+                    await _configurationHandler.OnEnterAsync(ct);
+                    break;
+            }
         }
 
         public async ValueTask DisposeAsync()
@@ -166,9 +189,19 @@ namespace FunCraft.Network.Connections
                 var writer = new PacketWriter(buffer);
                 writer.WriteVarInt(totalLength);
                 writer.WriteVarInt(packet.PacketId);
-                packet.Write(buffer.AsSpan(writer.BytesWritten), out _);
+                packet.Write(buffer.AsSpan(writer.BytesWritten), out var payloadWritten);
 
-                await _socket.SendAsync(buffer.AsMemory(0, frameLength), ct);
+                var actualTotal = writer.BytesWritten + payloadWritten;
+
+                var payload = buffer.AsSpan(0, frameLength);
+                var hex = string.Join(" ", payload.ToArray().Select(b => b.ToString("X2")));
+
+                var memory = buffer.AsMemory(0, actualTotal);
+                while (memory.Length > 0)
+                {
+                    var sent = await _socket.SendAsync(memory, ct);
+                    memory = memory[sent..];
+                }
             }
             finally
             {

@@ -1,70 +1,71 @@
-﻿using System.Reflection;
-using System.Text.Json;
+﻿using System.Text;
+
 namespace FunCraft.Protocol.Registry
 {
-    using NBT;
-    using Packets.Registry;
+    using FunCraft.Protocol.Packets.Registry;
+    using Properties;
 
-    /// <summary>
-    /// Loads registries from the embedded registries.json resource and builds
-    /// <see cref="RegistryDataPacket"/> instances ready to send during Configuration state.
-    /// 
-    /// Call <see cref="Load"/> once at startup. The resulting packets are immutable
-    /// and can be reused across all connections.
-    /// </summary>
     public static class RegistryLoader
     {
-        private static IReadOnlyList<RegistryDataPacket>? _packets;
+        public static IReadOnlyList<RegistryDataPacket> Packets = [];
 
-        public static IReadOnlyList<RegistryDataPacket> Packets =>
-            _packets ?? throw new InvalidOperationException("RegistryLoader.Load() has not been called.");
-
-        /// <summary>
-        /// Reads the embedded registries.json, converts each registry entry to NBT,
-        /// and caches the resulting packets. Call once from Program.cs or server startup.
-        /// </summary>
         public static void Load()
         {
-            var json = ReadEmbeddedJson();
-            _packets = BuildPackets(json);
-        }
+            var data = (byte[]) Resources.ResourceManager.GetObject("registries")!;
+            var pos = 0;
 
-        private static JsonDocument ReadEmbeddedJson()
-        {
-            var assembly = Assembly.GetExecutingAssembly();
-
-            // The embedded resource name follows: {DefaultNamespace}.{FolderPath}.{FileName}
-            var resourceName = assembly
-                .GetManifestResourceNames()
-                .FirstOrDefault(n => n.EndsWith("registries.json"))
-                ?? throw new FileNotFoundException("Embedded resource 'registries.json' not found.");
-
-            using var stream = assembly.GetManifestResourceStream(resourceName)
-                ?? throw new FileNotFoundException($"Could not open resource stream: {resourceName}");
-
-            return JsonDocument.Parse(stream);
-        }
-
-        private static List<RegistryDataPacket> BuildPackets(JsonDocument doc)
-        {
             var packets = new List<RegistryDataPacket>();
+            var registryCount = ReadVarInt(data, ref pos);
 
-            foreach (var registry in doc.RootElement.EnumerateObject())
+            for (var r = 0; r < registryCount; r++)
             {
-                var registryName = registry.Name; // e.g. "minecraft:dimension_type"
-                var entries = new List<RegistryEntry>();
+                var registryId = ReadString(data, ref pos);
+                var entryCount = ReadVarInt(data, ref pos);
 
-                foreach (var entry in registry.Value.EnumerateObject())
+                var entries = new List<RegistryEntry>(entryCount);
+                for (var e = 0; e < entryCount; e++)
                 {
-                    var entryName = entry.Name; // e.g. "minecraft:overworld"
-                    var nbtBytes = NbtConverter.Convert(entry.Value);
-                    entries.Add(new RegistryEntry(entryName, nbtBytes));
+                    var entryId = ReadString(data, ref pos);
+                    var hasNbt = data[pos++] != 0;
+                    byte[]? nbt = null;
+                    if (hasNbt)
+                    {
+                        var nbtLen = ReadVarInt(data, ref pos);
+                        nbt = new byte[nbtLen];
+                        data.AsSpan(pos, nbtLen).CopyTo(nbt);
+                        pos += nbtLen;
+                    }
+
+                    entries.Add(new RegistryEntry(entryId, nbt));
                 }
 
-                packets.Add(new RegistryDataPacket(registryName, entries));
+                packets.Add(new RegistryDataPacket(registryId, entries));
             }
 
-            return packets;
+            Packets = packets;
+
+            Console.WriteLine($"Loaded {Packets.Count} registry packets");
+            Console.WriteLine($"Has cat_variant: {Packets.Any(p => p.RegistryName == "minecraft:cat_variant")}");
+        }
+
+        private static int ReadVarInt(byte[] data, ref int pos)
+        {
+            int value = 0, shift = 0;
+            while (true)
+            {
+                var b = data[pos++];
+                value |= (b & 0x7F) << shift;
+                if ((b & 0x80) == 0) return value;
+                shift += 7;
+            }
+        }
+
+        private static string ReadString(byte[] data, ref int pos)
+        {
+            var len = ReadVarInt(data, ref pos);
+            var str = Encoding.UTF8.GetString(data, pos, len);
+            pos += len;
+            return str;
         }
     }
 }

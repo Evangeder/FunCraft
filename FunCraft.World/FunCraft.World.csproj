@@ -14,14 +14,4 @@
     <IsAotCompatible>True</IsAotCompatible>
   </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.3" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.3" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\FunCraft.Protocol\FunCraft.Protocol.csproj" />
-    <ProjectReference Include="..\FunCraft.World\FunCraft.World.csproj" />
-  </ItemGroup>
-
 </Project>

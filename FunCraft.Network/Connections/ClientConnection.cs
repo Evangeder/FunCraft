@@ -4,6 +4,7 @@ using System.Net.Sockets;
 
 namespace FunCraft.Network.Connections
 {
+    using FunCraft.World;
     using Protocol.Packets;
     using Protocol.Types;
     using Protocol.IO;
@@ -15,6 +16,7 @@ namespace FunCraft.Network.Connections
 
         private readonly Socket _socket;
         private readonly Pipe _pipe = new();
+        private readonly SemaphoreSlim _semaphore = new(1, 1);
 
         private readonly HandshakeHandler _handshakeHandler;
         private readonly StatusHandler _statusHandler;
@@ -24,14 +26,14 @@ namespace FunCraft.Network.Connections
 
         private ConnectionState _connectionState = ConnectionState.Handshaking;
 
-        public ClientConnection(Socket socket)
+        public ClientConnection(Socket socket, IWorldSource world)
         {
             _socket = socket;
             _handshakeHandler = new HandshakeHandler { Sender = this };
             _statusHandler = new StatusHandler { Sender = this };
             _loginHandler = new LoginHandler { Sender = this };
             _configurationHandler = new ConfigurationHandler { Sender = this };
-            _playHandler = new PlayHandler { Sender = this };
+            _playHandler = new PlayHandler(world) { Sender = this };
         }
 
         public async Task RunAsync(CancellationToken ct)
@@ -172,6 +174,7 @@ namespace FunCraft.Network.Connections
         {
             _socket.Shutdown(SocketShutdown.Both);
             _socket.Dispose();
+            _semaphore.Dispose();
             await _pipe.Reader.CompleteAsync();
             await _pipe.Writer.CompleteAsync();
         }
@@ -192,12 +195,20 @@ namespace FunCraft.Network.Connections
                 packet.Write(buffer.AsSpan(writer.BytesWritten), out var payloadWritten);
 
                 var actualTotal = writer.BytesWritten + payloadWritten;
-
                 var memory = buffer.AsMemory(0, actualTotal);
-                while (memory.Length > 0)
+
+                await _semaphore.WaitAsync(ct);
+                try
                 {
-                    var sent = await _socket.SendAsync(memory, ct);
-                    memory = memory[sent..];
+                    while (memory.Length > 0)
+                    {
+                        var sent = await _socket.SendAsync(memory, ct);
+                        memory = memory[sent..];
+                    }
+                }
+                finally
+                {
+                    _semaphore.Release();
                 }
             }
             finally

@@ -25,6 +25,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FunCraft.Network\FunCraft.Network.csproj" />
+    <ProjectReference Include="..\FunCraft.WorldGen\FunCraft.WorldGen.csproj" />
+    <ProjectReference Include="..\FunCraft.World\FunCraft.World.csproj" />
   </ItemGroup>
 
 </Project>

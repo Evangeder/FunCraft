@@ -6,6 +6,8 @@ namespace FunCraft.Server
 {
     using Network.Server;
     using Protocol.Registry;
+    using World;
+    using WorldGen;
 
     internal class Program
     {
@@ -14,6 +16,7 @@ namespace FunCraft.Server
             var host = Host.CreateDefaultBuilder(args)
                 .ConfigureServices(services =>
                 {
+                    services.AddSingleton<IWorldSource, FlatWorldGenerator>();
                     services.AddHostedService<MinecraftServer>();
                 })
                 .ConfigureLogging(logging =>

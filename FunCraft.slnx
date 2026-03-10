@@ -8,6 +8,8 @@
     <Project Path="FunCraft.Network/FunCraft.Network.csproj" />
     <Project Path="FunCraft.Protocol/FunCraft.Protocol.csproj" />
     <Project Path="FunCraft.Server/FunCraft.Server.csproj" />
+    <Project Path="FunCraft.World/FunCraft.World.csproj" Id="78dcbc25-1f46-4c76-b3b7-5f235c8fbfbe" />
+    <Project Path="FunCraft.WorldGen/FunCraft.WorldGen.csproj" Id="185017e2-385d-4515-abd7-3ed65aadd6aa" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="FunCraft.Tests/FunCraft.Tests.csproj" />

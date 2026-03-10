@@ -66,7 +66,7 @@ namespace FunCraft.Data.Migrations
                     continue;
 
                 var fileName = resourceName[prefix.Length..];
-                var digits = new string(fileName.TakeWhile(char.IsDigit).ToArray());
+                var digits = new string([.. fileName.TakeWhile(char.IsDigit)]);
                 if (digits.Length == 0)
                 {
                     throw new InvalidOperationException($"Migration resource '{resourceName}' has no numeric version prefix.");

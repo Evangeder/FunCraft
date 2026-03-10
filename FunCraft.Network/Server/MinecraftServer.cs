@@ -6,10 +6,12 @@ using System.Net.Sockets;
 
 namespace FunCraft.Network.Server
 {
-    using FunCraft.World;
     using Connections;
+    using Data.Players;
+    using Data.Sessions;
+    using FunCraft.World;
 
-    public class MinecraftServer(IConfiguration config, ILogger<MinecraftServer> logger, IWorldSource world) : BackgroundService
+    public class MinecraftServer(IConfiguration config, ILogger<MinecraftServer> logger, IWorldSource world, IPlayerRepository players, ISessionStore sessions) : BackgroundService
     {
         private readonly int _port = int.Parse(config["Server:Port"] ?? "25565");
 
@@ -32,7 +34,7 @@ namespace FunCraft.Network.Server
                 {
                     var clientSocket = await listener.AcceptAsync(ct);
                     clientSocket.NoDelay = true;
-                    _ = HandleConnectionAsync(clientSocket, world, ct);
+                    _ = HandleConnectionAsync(clientSocket, ct);
                 }
                 catch (Exception ex)
                 {
@@ -41,9 +43,9 @@ namespace FunCraft.Network.Server
             }
         }
 
-        private static async Task HandleConnectionAsync(Socket socket, IWorldSource world, CancellationToken ct)
+        private async Task HandleConnectionAsync(Socket socket, CancellationToken ct)
         {
-            await using var connection = new ClientConnection(socket, world);
+            await using var connection = new ClientConnection(socket, world, players, sessions);
             await connection.RunAsync(ct);
         }
     }

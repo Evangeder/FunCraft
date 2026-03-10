@@ -1,14 +1,18 @@
 ﻿using System.Buffers;
 using System.IO.Pipelines;
+using System.Net;
 using System.Net.Sockets;
 
 namespace FunCraft.Network.Connections
 {
-    using FunCraft.World;
+    using Data.Players;
+    using Data.Sessions;
     using Protocol.Packets;
     using Protocol.Types;
     using Protocol.IO;
     using Handlers;
+
+    using global::FunCraft.World;
 
     public sealed class ClientConnection : IPacketSender, IAsyncDisposable
     {
@@ -16,7 +20,11 @@ namespace FunCraft.Network.Connections
 
         private readonly Socket _socket;
         private readonly Pipe _pipe = new();
-        private readonly SemaphoreSlim _semaphore = new(1, 1);
+        private readonly SemaphoreSlim _sendLock = new(1, 1);
+
+        private readonly PlayerContext _ctx;
+        private readonly IPlayerRepository _players;
+        private readonly ISessionStore _sessions;
 
         private readonly HandshakeHandler _handshakeHandler;
         private readonly StatusHandler _statusHandler;
@@ -26,14 +34,22 @@ namespace FunCraft.Network.Connections
 
         private ConnectionState _connectionState = ConnectionState.Handshaking;
 
-        public ClientConnection(Socket socket, IWorldSource world)
+        public ClientConnection(Socket socket, IWorldSource world, IPlayerRepository players, ISessionStore sessions)
         {
             _socket = socket;
+            _players = players;
+            _sessions = sessions;
+
+            _ctx = new PlayerContext
+            {
+                IpAddress = (socket.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "unknown"
+            };
+
             _handshakeHandler = new HandshakeHandler { Sender = this };
             _statusHandler = new StatusHandler { Sender = this };
-            _loginHandler = new LoginHandler { Sender = this };
+            _loginHandler = new LoginHandler(_ctx, sessions) { Sender = this };
             _configurationHandler = new ConfigurationHandler { Sender = this };
-            _playHandler = new PlayHandler(world) { Sender = this };
+            _playHandler = new PlayHandler(world, _ctx, players) { Sender = this };
         }
 
         public async Task RunAsync(CancellationToken ct)
@@ -48,18 +64,11 @@ namespace FunCraft.Network.Connections
                 var buffer = _pipe.Writer.GetMemory(4096);
                 var bytesRead = await _socket.ReceiveAsync(buffer, ct);
 
-                if (bytesRead == 0)
-                {
-                    break;
-                }
+                if (bytesRead == 0) break;
 
                 _pipe.Writer.Advance(bytesRead);
                 var result = await _pipe.Writer.FlushAsync(ct);
-
-                if (result.IsCompleted)
-                {
-                    break;
-                }
+                if (result.IsCompleted) break;
             }
 
             await _pipe.Writer.CompleteAsync();
@@ -71,7 +80,6 @@ namespace FunCraft.Network.Connections
             {
                 var result = await _pipe.Reader.ReadAsync(ct);
                 var buffer = result.Buffer;
-
                 var consumed = buffer.Start;
                 var examined = buffer.End;
 
@@ -82,20 +90,14 @@ namespace FunCraft.Network.Connections
                 }
 
                 _pipe.Reader.AdvanceTo(consumed, examined);
-
-                if (result.IsCompleted)
-                {
-                    break;
-                }
+                if (result.IsCompleted) break;
             }
 
             await _pipe.Reader.CompleteAsync();
         }
 
-        private static bool TryReadPacket(ref ReadOnlySequence<byte> buffer, out int packetId,
-            out ReadOnlySequence<byte> payload)
+        private static bool TryReadPacket(ref ReadOnlySequence<byte> buffer, out int packetId, out ReadOnlySequence<byte> payload)
         {
-            
             if (buffer.Length > 0 && buffer.FirstSpan[0] == LegacyPingPacket)
             {
                 buffer = buffer.Slice(buffer.Length);
@@ -108,31 +110,16 @@ namespace FunCraft.Network.Connections
             payload = default;
 
             var reader = new SequenceReader<byte>(buffer);
-
-            if (!VarInt.TryRead(ref reader, out var length))
-            {
-                return false;
-            }
-
-            if (reader.Remaining < length)
-            {
-                return false;
-            }
+            if (!VarInt.TryRead(ref reader, out var length)) return false;
+            if (reader.Remaining < length) return false;
 
             var beforeId = reader.Consumed;
-
-            if (!VarInt.TryRead(ref reader, out packetId))
-            {
-                return false;
-            }
+            if (!VarInt.TryRead(ref reader, out packetId)) return false;
 
             var idLength = reader.Consumed - beforeId;
-
             var payloadLength = length - idLength;
             payload = buffer.Slice(reader.Position, payloadLength);
-
             buffer = buffer.Slice(reader.Position).Slice(payloadLength);
-
             return true;
         }
 
@@ -151,9 +138,7 @@ namespace FunCraft.Network.Connections
             };
 
             if (_connectionState != previousState)
-            {
                 await OnStateEnteredAsync(_connectionState, ct);
-            }
         }
 
         private async ValueTask OnStateEnteredAsync(ConnectionState state, CancellationToken ct)
@@ -172,9 +157,32 @@ namespace FunCraft.Network.Connections
 
         public async ValueTask DisposeAsync()
         {
+            if (_ctx.Uuid != Guid.Empty)
+            {
+                try
+                {
+                    await _players.SaveAsync(new global::FunCraft.Data.Players.PlayerRecord
+                    {
+                        Uuid = _ctx.Uuid,
+                        Username = _ctx.Username,
+                        X = _ctx.X,
+                        Y = _ctx.Y,
+                        Z = _ctx.Z,
+                        Yaw = _ctx.Yaw,
+                        Pitch = _ctx.Pitch,
+                    });
+
+                    await _sessions.EndAsync(_ctx.Uuid, DateTimeOffset.UtcNow);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ClientConnection] Failed to persist on disconnect: {ex.Message}");
+                }
+            }
+
             _socket.Shutdown(SocketShutdown.Both);
             _socket.Dispose();
-            _semaphore.Dispose();
+            _sendLock.Dispose();
             await _pipe.Reader.CompleteAsync();
             await _pipe.Writer.CompleteAsync();
         }
@@ -197,7 +205,7 @@ namespace FunCraft.Network.Connections
                 var actualTotal = writer.BytesWritten + payloadWritten;
                 var memory = buffer.AsMemory(0, actualTotal);
 
-                await _semaphore.WaitAsync(ct);
+                await _sendLock.WaitAsync(ct);
                 try
                 {
                     while (memory.Length > 0)
@@ -208,7 +216,7 @@ namespace FunCraft.Network.Connections
                 }
                 finally
                 {
-                    _semaphore.Release();
+                    _sendLock.Release();
                 }
             }
             finally

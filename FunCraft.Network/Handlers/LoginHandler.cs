@@ -2,11 +2,12 @@
 
 namespace FunCraft.Network.Handlers
 {
+    using Data.Sessions;
     using Protocol.Packets;
     using Protocol.Packets.Login.Incoming;
     using Protocol.Packets.Login.Outgoing;
 
-    internal class LoginHandler : AsyncHandlerBase
+    internal class LoginHandler(PlayerContext ctx, ISessionStore sessions) : AsyncHandlerBase
     {
         internal override async ValueTask<ConnectionState> HandleAsync(int packetId, ReadOnlySequence<byte> payload,
             CancellationToken ct)
@@ -14,17 +15,28 @@ namespace FunCraft.Network.Handlers
             switch (packetId)
             {
                 case LoginStartPacket.Id:
-                    var login = new LoginStartPacket();
                     var reader = new SequenceReader<byte>(payload);
-
+                    var login = new LoginStartPacket();
                     login.TryRead(ref reader);
 
-                    // TODO: decide if success or disconnect (because for example player is banned)
+                    // Populate the shared context so PlayHandler can use it.
+                    ctx.Username = login.PlayerName;
+                    ctx.Uuid = login.PlayerGuid;
+
                     await Sender.SendAsync(new LoginSuccessPacket
                     {
                         PlayerName = login.PlayerName,
                         PlayerGuid = login.PlayerGuid,
                         PropertyCount = 0
+                    }, ct);
+
+                    // Write the live session to Redis.
+                    await sessions.SetAsync(new PlayerSession
+                    {
+                        Uuid = ctx.Uuid,
+                        Username = ctx.Username,
+                        IpAddress = ctx.IpAddress,
+                        ConnectedAt = DateTimeOffset.UtcNow,
                     }, ct);
 
                     return ConnectionState.Login;

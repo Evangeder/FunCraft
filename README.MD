@@ -28,20 +28,21 @@ That target appears in several places in the codebase, including:
 
 ## What is implemented today
 
-| Area | Status | Notes |
-|---|---|---|
-| TCP listener | Implemented | Raw socket server with IPv4/IPv6 dual mode |
-| Packet framing | Implemented | Length-prefixed frames with VarInt packet IDs |
-| Handshake | Implemented | Routes to Status or Login state |
-| Status ping | Implemented | Returns hardcoded MOTD, version, and player counts |
-| Login | Partially implemented | Offline-style login success, no auth/session integration |
-| Configuration | Implemented | Sends known packs and bundled registry data |
-| Play bootstrap | Partially implemented | Sends login/play data, teleport, chunk radius, time, chunks |
-| World generation | Implemented | Cached flat world generator |
-| Chunk serialization | Implemented | Heightmaps, block states, biomes, light masks |
-| Persistence | Not implemented | No save/load layer yet |
-| Multiplayer gameplay systems | Not implemented | No entities, inventory, combat, commands, etc. |
-| Production readiness | Not implemented | Educational/prototype stage |
+| Area                         | Status                | Notes                                                       |
+| ---------------------------- | --------------------- | ----------------------------------------------------------- |
+| TCP listener                 | Implemented           | Raw socket server with IPv4/IPv6 dual mode                  |
+| Packet framing               | Implemented           | Length-prefixed frames with VarInt packet IDs               |
+| Handshake                    | Implemented           | Routes to Status or Login state                             |
+| Status ping                  | Implemented           | Returns hardcoded MOTD, version, and player counts          |
+| Login                        | Partially implemented | Offline-style login success, no auth/session integration    |
+| Configuration                | Implemented           | Sends known packs and bundled registry data                 |
+| Play bootstrap               | Partially implemented | Sends login/play data, teleport, chunk radius, time, chunks |
+| World generation             | Implemented           | Cached flat world generator                                 |
+| Chunk serialization          | Implemented           | Heightmaps, block states, biomes, light masks               |
+| Persistence                  | Partially implemented | Only player position and rotation is saved                  |
+| Multiplayer gameplay systems | Not implemented       | No entities, inventory, combat, commands, etc.              |
+| Production readiness         | Not implemented       | Educational/prototype stage                                 |
+| PostgreSQL DB Backend        | Partially implemented | Docker based                                                |
 
 ## Roadmap
 The project is currently in the early protocol-first stage. Core networking, packet framing, connection state handling, and the first playable bootstrap path are already in place.

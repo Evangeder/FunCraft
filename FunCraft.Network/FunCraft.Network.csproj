@@ -20,6 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\FunCraft.Data\FunCraft.Data.csproj" />
     <ProjectReference Include="..\FunCraft.Protocol\FunCraft.Protocol.csproj" />
     <ProjectReference Include="..\FunCraft.World\FunCraft.World.csproj" />
   </ItemGroup>

@@ -2,7 +2,7 @@
 using System.Buffers;
 using System.Text;
 
-namespace FunCraft.Tests
+namespace FunCraft.Tests.NBT
 {
     using Protocol.Registry;
     using Protocol.Types;
@@ -51,7 +51,9 @@ namespace FunCraft.Tests
             }
 
             foreach (var f in failed)
+            {
                 output.WriteLine($"FAIL: {f}");
+            }
 
             Assert.Empty(failed);
         }
@@ -70,7 +72,7 @@ namespace FunCraft.Tests
                     output.WriteLine($"{packet.RegistryName}: {withNbt} with NBT, {withoutNbt} without NBT");
 
                 foreach (var entry in packet.Entries.Where(e => e.NbtData != null && e.NbtData[0] != 0x0A))
-                    output.WriteLine($"  BAD HEADER: {entry.Name} first=0x{entry.NbtData[0]:X2}");
+                    output.WriteLine($"  BAD HEADER: {entry.Name} first=0x{entry.NbtData![0]:X2}");
             }
         }
 
@@ -127,7 +129,7 @@ namespace FunCraft.Tests
             RegistryLoader.Load();
 
             var packet = RegistryLoader.Packets.First(p => p.RegistryName == "minecraft:dimension_type");
-            var entry = packet.Entries.First();
+            var entry = packet.Entries[0];
 
             output.WriteLine($"Entry: {entry.Name} ({entry.NbtData!.Length} bytes)");
             output.WriteLine("");

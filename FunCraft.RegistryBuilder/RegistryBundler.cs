@@ -89,7 +89,7 @@ namespace FunCraft.RegistryBuilder
                     ? Path.Combine(generatedFolder, "data", "minecraft", relPath!)
                     : null;
 
-                SchemaAnalyzer analyzer = null;
+                SchemaAnalyzer? analyzer = null;
                 CompoundSchemaNode? schema = null;
                 if (dataDir != null && Directory.Exists(dataDir))
                 {
@@ -123,7 +123,7 @@ namespace FunCraft.RegistryBuilder
                     }
 
                     using var entryDoc = JsonDocument.Parse(File.ReadAllBytes(filePath));
-                    var nbtBytes = NbtBinaryWriter.WriteNetworkNbt(entryDoc.RootElement, schema!, analyzer);
+                    var nbtBytes = NbtBinaryWriter.WriteNetworkNbt(entryDoc.RootElement, schema!, analyzer!);
 
                     ms.WriteByte(1); // hasNbt = true
                     WriteVarInt(ms, nbtBytes.Length);

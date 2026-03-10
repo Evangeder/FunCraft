@@ -1,13 +1,13 @@
 ﻿using System.Buffers;
 using Xunit.Abstractions;
 
-namespace FunCraft.Tests
+namespace FunCraft.Tests.Packets
 {
     using Protocol.Packets.Registry.Outgoing;
     using Protocol.Registry;
     using Protocol.Types;
 
-    public class RegistryPacketTests(ITestOutputHelper output)
+    public class RegistryDataPacketTests(ITestOutputHelper output)
     {
         // Replicates exactly what ClientConnection.SendAsync frames on the wire:
         // [VarInt: totalLength][VarInt: packetId][payload bytes]

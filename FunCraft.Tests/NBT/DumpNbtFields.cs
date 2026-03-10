@@ -1,10 +1,14 @@
 ﻿using System.Text;
 using Xunit.Abstractions;
 
-namespace FunCraft.Tests
+namespace FunCraft.Tests.NBT
 {
     using Protocol.Registry;
 
+    /// <summary>
+    /// Not exactly a test, but helped me debug and see what's going on with the NBT tags.
+    /// </summary>
+    /// <param name="output"></param>
     public class DumpNbtFields(ITestOutputHelper output)
     {
         [Fact]
@@ -30,7 +34,7 @@ namespace FunCraft.Tests
                 if (packet == null) { output.WriteLine($"MISSING: {regName}"); continue; }
 
                 output.WriteLine($"=== {regName} ===");
-                var first = packet.Entries.First();
+                var first = packet.Entries[0];
                 output.WriteLine($"  [{first.Name}]");
                 var data = first.NbtData!;
                 int pos = 3;
@@ -169,7 +173,6 @@ namespace FunCraft.Tests
 
         private static short ReadI16(byte[] d, ref int p)
         {
-
             var v = (short)((d[p] << 8) | d[p + 1]);
             p += 2;
             return v;
@@ -201,7 +204,7 @@ namespace FunCraft.Tests
 
         private static float ReadF32(byte[] d, ref int p)
         {
-            var b = new byte[]
+            var b = new []
             {
                 d[p + 3],
                 d[p + 2],
@@ -214,7 +217,7 @@ namespace FunCraft.Tests
 
         private static double ReadF64(byte[] d, ref int p)
         {
-            var b = new byte[]
+            var b = new []
             {
                 d[p + 7],
                 d[p + 6],
@@ -228,6 +231,5 @@ namespace FunCraft.Tests
             p += 8;
             return BitConverter.ToDouble(b);
         }
-
     }
 }

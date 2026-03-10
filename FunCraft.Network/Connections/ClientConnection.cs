@@ -144,7 +144,7 @@ namespace FunCraft.Network.Connections
                 ConnectionState.Status => await _statusHandler.HandleAsync(packetId, payload, ct),
                 ConnectionState.Login => await _loginHandler.HandleAsync(packetId, payload, ct),
                 ConnectionState.Configuration => await _configurationHandler.HandleAsync(packetId, ct),
-                ConnectionState.Play => PlayHandler.Handle(),
+                ConnectionState.Play => await _playHandler.HandleAsync(packetId, ct),
                 _ => _connectionState
             };
 

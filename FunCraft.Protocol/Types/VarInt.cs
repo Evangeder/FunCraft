@@ -2,7 +2,7 @@
 
 namespace FunCraft.Protocol.Types
 {
-    public static class VarInt
+    public readonly struct VarInt : IDataType<VarInt, int>
     {
         private const byte SegmentBits = 0x7F;
         private const byte ContinueBit = 0x80;

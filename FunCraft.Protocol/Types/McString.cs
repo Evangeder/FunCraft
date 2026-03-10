@@ -3,7 +3,7 @@ using System.Text;
 
 namespace FunCraft.Protocol.Types
 {
-    public static class McString
+    public readonly struct McString : IDataType<McString, string>
     {
         public static int Write(Span<byte> destination, string value)
         {

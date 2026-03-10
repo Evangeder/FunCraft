@@ -2,7 +2,7 @@
 
 namespace FunCraft.Protocol.Types
 {
-    public static class VarLong
+    public readonly struct VarLong : IDataType<VarLong, long>
     {
         private const byte SegmentBits = 0x7F;
         private const byte ContinueBit = 0x80;

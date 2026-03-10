@@ -1,16 +1,17 @@
-﻿namespace FunCraft.Network.Handlers
+﻿using System.Buffers;
+
+namespace FunCraft.Network.Handlers
 {
-    using Connections;
-    using Protocol.Packets.Registry;
     using Protocol.Packets;
-    using Protocol.Packets.Configuration;
+    using Protocol.Packets.Configuration.Incoming;
+    using Protocol.Packets.Configuration.Outgoing;
+    using Protocol.Packets.Registry.Incoming;
+    using Protocol.Packets.Registry.Outgoing;
     using Protocol.Registry;
-
-    internal class ConfigurationHandler
+    
+    internal class ConfigurationHandler : AsyncHandlerBase
     {
-        internal required IPacketSender Sender { get; init; }
-
-        internal async ValueTask<ConnectionState> HandleAsync(int packetId, CancellationToken ct)
+        internal override async ValueTask<ConnectionState> HandleAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
         {
             switch (packetId)
             {

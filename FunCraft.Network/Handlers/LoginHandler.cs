@@ -3,14 +3,12 @@
 namespace FunCraft.Network.Handlers
 {
     using Protocol.Packets;
-    using Protocol.Packets.Login;
-    using Connections;
+    using Protocol.Packets.Login.Incoming;
+    using Protocol.Packets.Login.Outgoing;
 
-    internal class LoginHandler
+    internal class LoginHandler : AsyncHandlerBase
     {
-        internal required IPacketSender Sender { get; init; }
-
-        internal async ValueTask<ConnectionState> HandleAsync(int packetId, ReadOnlySequence<byte> payload,
+        internal override async ValueTask<ConnectionState> HandleAsync(int packetId, ReadOnlySequence<byte> payload,
             CancellationToken ct)
         {
             switch (packetId)

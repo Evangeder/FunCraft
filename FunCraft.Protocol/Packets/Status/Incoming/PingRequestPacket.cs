@@ -1,23 +1,21 @@
 ﻿using System.Buffers;
 
-namespace FunCraft.Protocol.Packets.Login
+namespace FunCraft.Protocol.Packets.Status.Incoming
 {
     using IO;
 
-    public class LoginStartPacket : IIncomingPacket
+    public class PingRequestPacket : IIncomingPacket
     {
-        public const int Id = 0x00;
+        public const int Id = 0x01;
 
-        public string PlayerName { get; private set; } = string.Empty;
-        public Guid PlayerGuid { get; private set; }
+        public long Payload { get; private set; }
 
         public bool TryRead(ref SequenceReader<byte> reader)
         {
             try
             {
                 var packetReader = new PacketReader(ref reader);
-                PlayerName = packetReader.ReadString();
-                PlayerGuid = packetReader.ReadGuid();
+                Payload = packetReader.ReadLong();
                 return true;
             }
             catch (InvalidDataException)

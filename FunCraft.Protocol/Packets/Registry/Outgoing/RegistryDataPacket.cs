@@ -1,7 +1,7 @@
-﻿namespace FunCraft.Protocol.Packets.Registry
+﻿namespace FunCraft.Protocol.Packets.Registry.Outgoing
 {
-    using IO;
     using Packets;
+    using IO;
     using Types;
 
     public class RegistryDataPacket(string registryName, IReadOnlyList<RegistryEntry> entries) : IPacket

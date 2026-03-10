@@ -1,4 +1,4 @@
-﻿namespace FunCraft.Protocol.Packets.Registry
+﻿namespace FunCraft.Protocol.Packets.Registry.Outgoing
 {
     using IO;
     using Types;

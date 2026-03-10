@@ -2,30 +2,29 @@
 
 namespace FunCraft.Network.Handlers
 {
-    using Connections;
     using Protocol.Packets;
-    using Protocol.Packets.Play;
+    using Protocol.Packets.Play.Incoming;
+    using Protocol.Packets.Play.Outgoing;
 
     /// <summary>
     /// Handles the Play connection state.
+    /// <br/>TODO: Expand properties to allow sending personalized data
     /// </summary>
-    internal class PlayHandler
+    internal class PlayHandler : AsyncHandlerBase
     {
         private const int SpawnTeleportId = 1;
-        private const int ViewDistance = 2; // radius — (2r+1)^2 = 25 chunks total
+
+        /// <summary>
+        /// Radius — (2r+1)^2 = 25 chunks total, for now
+        /// </summary>
+        private const int ViewDistance = 2;
 
         private const double SpawnX = 0.5;
         private const double SpawnY = 65.0;
         private const double SpawnZ = 0.5;
 
-        private bool _spawnAcked = false;
-
-        internal required IPacketSender Sender { get; init; }
-
         internal async ValueTask OnEnterAsync(CancellationToken ct)
         {
-            Console.WriteLine("PlayHandler::OnEnterAsync()");
-
             await Sender.SendAsync(new LoginPlayPacket
             {
                 EntityId = 1,
@@ -51,13 +50,11 @@ namespace FunCraft.Network.Handlers
             await Sender.SendAsync(new SetChunkCacheRadiusPacket { ViewDistance = ViewDistance }, ct);
         }
 
-        internal async ValueTask<ConnectionState> HandleAsync(int packetId, CancellationToken ct)
+        internal override async ValueTask<ConnectionState> HandleAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
         {
             switch (packetId)
             {
-                case ConfirmTeleportationPacket.Id when !_spawnAcked:
-                    _spawnAcked = true;
-                    Console.WriteLine("PlayHandler: teleport confirmed — sending world");
+                case ConfirmTeleportationPacket.Id:
                     await SendWorldAsync(ct);
                     break;
 
@@ -73,16 +70,13 @@ namespace FunCraft.Network.Handlers
         {
             await Sender.SendAsync(new GameEventPacket { Event = 13, Value = 0f }, ct);
 
-            var r = ViewDistance;
-            for (var cx = -r; cx <= r; cx++)
+            for (var chunkX = -ViewDistance; chunkX <= ViewDistance; chunkX++)
             {
-                for (var cz = -r; cz <= r; cz++)
+                for (var chunkZ = -ViewDistance; chunkZ <= ViewDistance; chunkZ++)
                 {
-                    await Sender.SendAsync(new ChunkDataPacket {ChunkX = cx, ChunkZ = cz}, ct);
+                    await Sender.SendAsync(new ChunkDataPacket {ChunkX = chunkX, ChunkZ = chunkZ}, ct);
                 }
             }
-
-            Console.WriteLine($"PlayHandler: sent {(2 * r + 1) * (2 * r + 1)} chunks");
         }
     }
 }

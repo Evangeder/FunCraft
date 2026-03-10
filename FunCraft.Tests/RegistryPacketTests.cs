@@ -3,7 +3,7 @@ using Xunit.Abstractions;
 
 namespace FunCraft.Tests
 {
-    using Protocol.Packets.Registry;
+    using Protocol.Packets.Registry.Outgoing;
     using Protocol.Registry;
     using Protocol.Types;
 

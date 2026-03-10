@@ -1,4 +1,4 @@
-﻿namespace FunCraft.Protocol.Packets.Play
+﻿namespace FunCraft.Protocol.Packets.Play.Outgoing
 {
     using IO;
 

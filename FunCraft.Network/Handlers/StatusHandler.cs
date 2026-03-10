@@ -4,16 +4,13 @@ using System.Text.Json;
 namespace FunCraft.Network.Handlers
 {
     using Protocol.Packets;
-    using Protocol.Packets.Status;
+    using Protocol.Packets.Status.Incoming;
+    using Protocol.Packets.Status.Outgoing;
     using Protocol.Models;
-    using Connections;
 
-    internal class StatusHandler
+    internal class StatusHandler : AsyncHandlerBase
     {
-        internal required IPacketSender Sender { get; init; }
-
-        internal async ValueTask<ConnectionState> HandleAsync(int packetId, ReadOnlySequence<byte> payload,
-            CancellationToken ct)
+        internal override async ValueTask<ConnectionState> HandleAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
         {
             switch (packetId)
             {

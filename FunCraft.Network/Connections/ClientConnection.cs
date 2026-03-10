@@ -16,6 +16,7 @@ namespace FunCraft.Network.Connections
         private readonly Socket _socket;
         private readonly Pipe _pipe = new();
 
+        private readonly HandshakeHandler _handshakeHandler;
         private readonly StatusHandler _statusHandler;
         private readonly LoginHandler _loginHandler;
         private readonly ConfigurationHandler _configurationHandler;
@@ -26,6 +27,7 @@ namespace FunCraft.Network.Connections
         public ClientConnection(Socket socket)
         {
             _socket = socket;
+            _handshakeHandler = new HandshakeHandler { Sender = this };
             _statusHandler = new StatusHandler { Sender = this };
             _loginHandler = new LoginHandler { Sender = this };
             _configurationHandler = new ConfigurationHandler { Sender = this };
@@ -134,17 +136,15 @@ namespace FunCraft.Network.Connections
 
         private async ValueTask HandlePacketAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
         {
-            Console.WriteLine($"ClientConnection::HandlePacketAsync({packetId}, payload, ct)");
-
             var previousState = _connectionState;
 
             _connectionState = _connectionState switch
             {
-                ConnectionState.Handshaking => HandshakeHandler.Handle(packetId, payload),
+                ConnectionState.Handshaking => _handshakeHandler.Handle(packetId, payload),
                 ConnectionState.Status => await _statusHandler.HandleAsync(packetId, payload, ct),
                 ConnectionState.Login => await _loginHandler.HandleAsync(packetId, payload, ct),
-                ConnectionState.Configuration => await _configurationHandler.HandleAsync(packetId, ct),
-                ConnectionState.Play => await _playHandler.HandleAsync(packetId, ct),
+                ConnectionState.Configuration => await _configurationHandler.HandleAsync(packetId, payload, ct),
+                ConnectionState.Play => await _playHandler.HandleAsync(packetId, payload, ct),
                 _ => _connectionState
             };
 
@@ -192,9 +192,6 @@ namespace FunCraft.Network.Connections
                 packet.Write(buffer.AsSpan(writer.BytesWritten), out var payloadWritten);
 
                 var actualTotal = writer.BytesWritten + payloadWritten;
-
-                var payload = buffer.AsSpan(0, frameLength);
-                var hex = string.Join(" ", payload.ToArray().Select(b => b.ToString("X2")));
 
                 var memory = buffer.AsMemory(0, actualTotal);
                 while (memory.Length > 0)

@@ -2,7 +2,7 @@
 {
     internal class Program
     {
-        static int Main(string[] args)
+        private static int Main(string[] args)
         {
             if (args.Length < 2)
             {
@@ -15,8 +15,8 @@
                 return 1;
             }
 
-            string generatedFolder = args[0];
-            string outputPath = args[1];
+            var generatedFolder = args[0];
+            var outputPath = args[1];
 
             if (!Directory.Exists(generatedFolder))
             {

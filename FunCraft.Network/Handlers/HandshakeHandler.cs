@@ -3,11 +3,11 @@
 namespace FunCraft.Network.Handlers
 {
     using Protocol.Packets;
-    using Protocol.Packets.Handshaking;
+    using Protocol.Packets.Handshaking.Incoming;
 
-    internal class HandshakeHandler
+    internal class HandshakeHandler : SyncHandlerBase
     {
-        internal static ConnectionState Handle(int packetId, ReadOnlySequence<byte> payload)
+        internal override ConnectionState Handle(int packetId, ReadOnlySequence<byte> payload)
         {
             if (packetId != HandshakePacket.PacketId)
             {

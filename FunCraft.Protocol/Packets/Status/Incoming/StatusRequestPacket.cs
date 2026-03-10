@@ -1,6 +1,6 @@
 ﻿using System.Buffers;
 
-namespace FunCraft.Protocol.Packets.Status
+namespace FunCraft.Protocol.Packets.Status.Incoming
 {
     public class StatusRequestPacket : IIncomingPacket
     {

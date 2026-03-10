@@ -1,6 +1,6 @@
 ﻿using System.Buffers;
 
-namespace FunCraft.Protocol.Packets.Registry
+namespace FunCraft.Protocol.Packets.Registry.Incoming
 {
     using Types;
 

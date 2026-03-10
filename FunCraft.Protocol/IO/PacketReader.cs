@@ -1,12 +1,12 @@
-﻿using FunCraft.Protocol.Types;
-using System.Buffers;
+﻿using System.Buffers;
 
 namespace FunCraft.Protocol.IO
 {
+    using Types;
+
     public ref struct PacketReader
     {
         private SequenceReader<byte> _reader;
-        public readonly int BytesRead => (int)_reader.Consumed;
 
         public PacketReader(ref SequenceReader<byte> reader)
         {

@@ -1,8 +1,9 @@
-﻿namespace FunCraft.Protocol.Packets.Configuration
+﻿namespace FunCraft.Protocol.Packets.Configuration.Outgoing
 {
     public class FinishConfigurationPacket : IPacket
     {
-        public int PacketId => 0x03;
+        public const int Id = 0x03;
+        public int PacketId => Id;
 
         public int GetLength() => 0;
 

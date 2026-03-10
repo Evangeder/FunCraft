@@ -1,6 +1,7 @@
-﻿namespace FunCraft.Protocol.Packets.Play
+﻿using System.Buffers;
+
+namespace FunCraft.Protocol.Packets.Play.Incoming
 {
-    using System.Buffers;
     using Types;
 
     /// <summary>

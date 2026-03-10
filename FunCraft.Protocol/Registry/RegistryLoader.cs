@@ -2,7 +2,7 @@
 
 namespace FunCraft.Protocol.Registry
 {
-    using Packets.Registry;
+    using Packets.Registry.Outgoing;
     using Properties;
 
     public static class RegistryLoader

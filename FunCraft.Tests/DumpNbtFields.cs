@@ -1,6 +1,5 @@
 ﻿using System.Text;
 using Xunit.Abstractions;
-using NUnit.Framework;
 
 namespace FunCraft.Tests
 {

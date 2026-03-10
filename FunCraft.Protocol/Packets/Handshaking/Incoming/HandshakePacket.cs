@@ -1,6 +1,6 @@
 ﻿using System.Buffers;
 
-namespace FunCraft.Protocol.Packets.Handshaking
+namespace FunCraft.Protocol.Packets.Handshaking.Incoming
 {
     using IO;
 

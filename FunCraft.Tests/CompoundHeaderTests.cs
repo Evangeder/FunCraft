@@ -1,11 +1,11 @@
 ﻿using Xunit.Abstractions;
+using System.Buffers;
+using System.Text;
 
 namespace FunCraft.Tests
 {
     using Protocol.Registry;
     using Protocol.Types;
-    using System.Buffers;
-    using System.Text;
 
     public class CompoundHeaderTests(ITestOutputHelper output)
     {

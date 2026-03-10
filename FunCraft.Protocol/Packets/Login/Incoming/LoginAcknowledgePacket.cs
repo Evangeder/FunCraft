@@ -1,6 +1,6 @@
 ﻿using System.Buffers;
 
-namespace FunCraft.Protocol.Packets.Login
+namespace FunCraft.Protocol.Packets.Login.Incoming
 {
     public class LoginAcknowledgePacket : IIncomingPacket
     {
@@ -8,7 +8,7 @@ namespace FunCraft.Protocol.Packets.Login
 
         public bool TryRead(ref SequenceReader<byte> reader)
         {
-            throw new NotImplementedException();
+            throw new InvalidOperationException("This packet contains no data and should never be read.");
         }
     }
 }

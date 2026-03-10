@@ -1,5 +1,4 @@
-﻿
-namespace FunCraft.Protocol.Packets.Login
+﻿namespace FunCraft.Protocol.Packets.Login.Outgoing
 {
     using IO;
     using Types;

@@ -1,4 +1,4 @@
-﻿namespace FunCraft.Protocol.Packets.Status
+﻿namespace FunCraft.Protocol.Packets.Status.Outgoing
 {
     using IO;
 

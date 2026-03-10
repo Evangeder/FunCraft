@@ -86,5 +86,29 @@ namespace FunCraft.Protocol.IO
         {
             _buffer[BytesWritten++] = value;
         }
+
+        public void WriteFloat(float value)
+        {
+            BinaryPrimitives.WriteSingleBigEndian(_buffer[BytesWritten..], value);
+            BytesWritten += sizeof(float);
+        }
+
+        public void WriteDouble(double value)
+        {
+            BinaryPrimitives.WriteDoubleBigEndian(_buffer[BytesWritten..], value);
+            BytesWritten += sizeof(double);
+        }
+
+        public void WriteShort(short value)
+        {
+            BinaryPrimitives.WriteInt16BigEndian(_buffer[BytesWritten..], value);
+            BytesWritten += sizeof(short);
+        }
+
+        public void WriteRawBytes(ReadOnlySpan<byte> data)
+        {
+            data.CopyTo(_buffer[BytesWritten..]);
+            BytesWritten += data.Length;
+        }
     }
 }

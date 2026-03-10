@@ -8,17 +8,6 @@ namespace FunCraft.Protocol.NBT
     /// </summary>
     public static class NbtConverter
     {
-        private const byte TagEnd = 0x00;
-        private const byte TagByte = 0x01;
-        private const byte TagShort = 0x02;
-        private const byte TagInt = 0x03;
-        private const byte TagLong = 0x04;
-        private const byte TagFloat = 0x05;
-        private const byte TagDouble = 0x06;
-        private const byte TagString = 0x08;
-        private const byte TagList = 0x09;
-        private const byte TagCompound = 0x0A;
-
         private const int InitialBufferSize = 4096;
 
         /// <summary>
@@ -62,7 +51,7 @@ namespace FunCraft.Protocol.NBT
             }
 
             EnsureCapacity(ref buffer, offset, 1);
-            buffer[offset++] = TagEnd;
+            buffer[offset++] = NbtTag.End;
         }
 
         private static void WriteNamedTag(string name, JsonElement value, ref byte[] buffer, ref int offset)
@@ -79,38 +68,38 @@ namespace FunCraft.Protocol.NBT
         {
             switch (tagType)
             {
-                case TagByte:
+                case NbtTag.Byte:
                     EnsureCapacity(ref buffer, offset, 1);
                     buffer[offset++] = value.ValueKind == JsonValueKind.True ? (byte)1 : (byte)0;
                     break;
 
-                case TagInt:
+                case NbtTag.Int:
                     EnsureCapacity(ref buffer, offset, 4);
                     WriteInt32BigEndian(buffer, offset, value.GetInt32());
                     offset += 4;
                     break;
 
-                case TagDouble:
+                case NbtTag.Double:
                     EnsureCapacity(ref buffer, offset, 8);
                     WriteDoubleBigEndian(buffer, offset, value.GetDouble());
                     offset += 8;
                     break;
 
-                case TagString:
+                case NbtTag.String:
                     WriteNbtString(value.GetString()!, ref buffer, ref offset);
                     break;
 
-                case TagList:
+                case NbtTag.List:
                     WriteList(value, ref buffer, ref offset);
                     break;
 
-                case TagCompound:
+                case NbtTag.Compound:
                     foreach (var prop in value.EnumerateObject())
                     {
                         WriteNamedTag(prop.Name, prop.Value, ref buffer, ref offset);
                     }
                     EnsureCapacity(ref buffer, offset, 1);
-                    buffer[offset++] = TagEnd;
+                    buffer[offset++] = NbtTag.End;
                     break;
             }
         }
@@ -119,7 +108,7 @@ namespace FunCraft.Protocol.NBT
         {
             var items = array.EnumerateArray().ToList();
 
-            var elementType = (byte)(items.Count > 0 ? GetTagType(items[0]) : TagByte);
+            var elementType = (byte)(items.Count > 0 ? GetTagType(items[0]) : NbtTag.Byte);
 
             EnsureCapacity(ref buffer, offset, 5);
             buffer[offset++] = elementType;
@@ -146,12 +135,12 @@ namespace FunCraft.Protocol.NBT
 
         private static byte GetTagType(JsonElement value) => value.ValueKind switch
         {
-            JsonValueKind.True or JsonValueKind.False => TagByte,
-            JsonValueKind.Number when IsInteger(value) => TagInt,
-            JsonValueKind.Number => TagDouble,
-            JsonValueKind.String => TagString,
-            JsonValueKind.Array => TagList,
-            JsonValueKind.Object => TagCompound,
+            JsonValueKind.True or JsonValueKind.False => NbtTag.Byte,
+            JsonValueKind.Number when IsInteger(value) => NbtTag.Int,
+            JsonValueKind.Number => NbtTag.Double,
+            JsonValueKind.String => NbtTag.String,
+            JsonValueKind.Array => NbtTag.List,
+            JsonValueKind.Object => NbtTag.Compound,
             _ => throw new NotSupportedException($"Unsupported JSON value kind: {value.ValueKind}")
         };
 

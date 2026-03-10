@@ -2,6 +2,7 @@
 {
     using IO;
     using Types;
+
     public class KnownPacksPacket : IPacket
     {
         public const int Id = 0x0E;

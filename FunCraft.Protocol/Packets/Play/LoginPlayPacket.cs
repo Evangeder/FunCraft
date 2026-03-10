@@ -4,7 +4,8 @@
     using Types;
 
     /// <summary>
-    /// Temporarily without settings // TODO settings, make this dynamic
+    /// Temporarily without settings
+    /// <br/>TODO settings, make this dynamic
     /// </summary>
     public class LoginPlayPacket : IPacket
     {

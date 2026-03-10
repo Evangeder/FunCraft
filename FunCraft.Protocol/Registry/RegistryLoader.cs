@@ -7,7 +7,7 @@ namespace FunCraft.Protocol.Registry
 
     public static class RegistryLoader
     {
-        public static IReadOnlyList<RegistryDataPacket> Packets = [];
+        public static IReadOnlyList<RegistryDataPacket> Packets { get; private set; } = [];
 
         public static void Load()
         {

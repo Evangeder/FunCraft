@@ -2,9 +2,11 @@
 {
     using IO;
 
-    public class PingResponse : IPacket
+    public class PongResponsePacket : IPacket
     {
-        public int PacketId => 0x01;
+        public const int Id = 0x01;
+        public int PacketId => Id;
+
         public int GetLength() => sizeof(long);
 
         public required long Payload { private get; init; }

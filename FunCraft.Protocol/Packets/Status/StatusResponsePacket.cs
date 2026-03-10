@@ -2,14 +2,14 @@
 {
     using Types;
 
-    public class StatusResponse : IPacket
+    public class StatusResponsePacket : IPacket
     {
-        public int PacketId => 0x00;
+        public const int Id = 0x00;
+        public int PacketId => Id;
+
         public int GetLength() => McString.GetSize(JsonResponse);
 
-
         public required string JsonResponse { private get; init; }
-
 
         public void Write(Span<byte> destination, out int bytesWritten)
         {

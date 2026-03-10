@@ -17,25 +17,25 @@ namespace FunCraft.Network.Handlers
         {
             switch (packetId)
             {
-                case StatusRequest.Id:
+                case StatusRequestPacket.Id:
                     var status = new ServerStatus(
                         new ServerVersion("1.21.10", 773),
                         new ServerPlayers(100, 0),
                         new ServerDescription("A FunC#raft Server")
                     );
 
-                    var packet = new StatusResponse
+                    var packet = new StatusResponsePacket
                     {
                         JsonResponse = JsonSerializer.Serialize(status, ServerStatusContext.Default.ServerStatus)
                     };
                     await Sender.SendAsync(packet, ct);
                     break;
 
-                case PingRequest.Id:
-                    var ping = new PingRequest();
+                case PingRequestPacket.Id:
+                    var ping = new PingRequestPacket();
                     var reader = new SequenceReader<byte>(payload);
                     ping.TryRead(ref reader);
-                    await Sender.SendAsync(new PingResponse { Payload = ping.Payload }, ct);
+                    await Sender.SendAsync(new PongResponsePacket { Payload = ping.Payload }, ct);
                     break;
             }
 

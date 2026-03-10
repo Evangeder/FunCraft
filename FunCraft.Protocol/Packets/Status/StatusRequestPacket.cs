@@ -2,7 +2,7 @@
 
 namespace FunCraft.Protocol.Packets.Status
 {
-    public class StatusRequest : IIncomingPacket
+    public class StatusRequestPacket : IIncomingPacket
     {
         public const int Id = 0x00;
 

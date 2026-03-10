@@ -5,7 +5,9 @@
 
     public class LoginDisconnect : IPacket
     {
-        public int PacketId => 0x00;
+        public const int Id = 0x00;
+        public int PacketId => Id;
+
         public int GetLength() => McString.GetSize(Reason);
 
         public required string Reason { private get; init; }

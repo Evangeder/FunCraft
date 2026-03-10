@@ -6,7 +6,9 @@ namespace FunCraft.Protocol.Packets.Login
 
     public class LoginSuccessPacket : IPacket
     {
-        public int PacketId => 0x02;
+        public const int Id = 0x02;
+        public int PacketId => Id;
+
         public int GetLength() =>
             16 +
             McString.GetSize(PlayerName) +

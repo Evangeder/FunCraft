@@ -3,7 +3,7 @@
     using IO;
     using System.Buffers;
 
-    public class PingRequest : IIncomingPacket
+    public class PingRequestPacket : IIncomingPacket
     {
         public const int Id = 0x01;
 

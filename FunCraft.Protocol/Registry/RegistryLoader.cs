@@ -2,7 +2,7 @@
 
 namespace FunCraft.Protocol.Registry
 {
-    using FunCraft.Protocol.Packets.Registry;
+    using Packets.Registry;
     using Properties;
 
     public static class RegistryLoader
@@ -11,7 +11,7 @@ namespace FunCraft.Protocol.Registry
 
         public static void Load()
         {
-            var data = (byte[]) Resources.ResourceManager.GetObject("registries")!;
+            var data = (byte[])Resources.ResourceManager.GetObject("registries")!;
             var pos = 0;
 
             var packets = new List<RegistryDataPacket>();
@@ -43,9 +43,6 @@ namespace FunCraft.Protocol.Registry
             }
 
             Packets = packets;
-
-            Console.WriteLine($"Loaded {Packets.Count} registry packets");
-            Console.WriteLine($"Has cat_variant: {Packets.Any(p => p.RegistryName == "minecraft:cat_variant")}");
         }
 
         private static int ReadVarInt(byte[] data, ref int pos)

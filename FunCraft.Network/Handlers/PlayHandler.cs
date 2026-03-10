@@ -23,6 +23,8 @@ namespace FunCraft.Network.Handlers
         private const double SpawnY = 65.0;
         private const double SpawnZ = 0.5;
 
+        private bool _spawnAcknowledged = false;
+
         internal async ValueTask OnEnterAsync(CancellationToken ct)
         {
             await Sender.SendAsync(new LoginPlayPacket
@@ -46,6 +48,7 @@ namespace FunCraft.Network.Handlers
                 Flags = 0
             }, ct);
 
+
             await Sender.SendAsync(new SetCenterChunkPacket { ChunkX = 0, ChunkZ = 0 }, ct);
             await Sender.SendAsync(new SetChunkCacheRadiusPacket { ViewDistance = ViewDistance }, ct);
         }
@@ -54,7 +57,8 @@ namespace FunCraft.Network.Handlers
         {
             switch (packetId)
             {
-                case ConfirmTeleportationPacket.Id:
+                case ConfirmTeleportationPacket.Id when !_spawnAcknowledged:
+                    _spawnAcknowledged = true;
                     await SendWorldAsync(ct);
                     break;
 

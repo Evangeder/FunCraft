@@ -5,5 +5,6 @@
     public interface IPacketSender
     {
         ValueTask SendAsync(IPacket packet, CancellationToken ct);
+        ValueTask SendRawAsync(ReadOnlyMemory<byte> framed, CancellationToken ct);
     }
 }

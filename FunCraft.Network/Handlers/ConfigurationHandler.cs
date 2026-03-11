@@ -8,7 +8,7 @@ namespace FunCraft.Network.Handlers
     using Protocol.Packets.Registry.Incoming;
     using Protocol.Packets.Registry.Outgoing;
     using Protocol.Registry;
-    
+
     internal class ConfigurationHandler : AsyncHandlerBase
     {
         internal override async ValueTask<ConnectionState> HandleAsync(int packetId, ReadOnlySequence<byte> payload, CancellationToken ct)
@@ -24,7 +24,8 @@ namespace FunCraft.Network.Handlers
 
                 default:
                     return ConnectionState.Configuration;
-            };
+            }
+            ;
         }
 
         internal async ValueTask OnEnterAsync(CancellationToken ct)
@@ -34,10 +35,11 @@ namespace FunCraft.Network.Handlers
 
         internal async ValueTask SendRegistriesAsync(CancellationToken ct)
         {
-            foreach (var registryPacket in RegistryLoader.Packets)
+            foreach (var framed in RegistryLoader.FramedPackets)
             {
-                await Sender.SendAsync(registryPacket, ct);
+                await Sender.SendRawAsync(framed, ct);
             }
+
             await Sender.SendAsync(new FinishConfigurationPacket(), ct);
         }
     }

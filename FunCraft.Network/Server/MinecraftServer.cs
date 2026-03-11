@@ -52,7 +52,7 @@ namespace FunCraft.Network.Server
         private async Task HandleConnectionAsync(Socket socket, CancellationToken ct)
         {
             await using var connection = new ClientConnection(
-                socket, world, players, inventory, sessions, registry, commands, _motd, _maxPlayers);
+                socket, world, players, inventory, sessions, registry, commands, _serverName, _motd, _maxPlayers);
             await connection.RunAsync(ct);
         }
 

@@ -1,4 +1,5 @@
-﻿using System.Buffers.Binary;
+﻿using FunCraft.Protocol.Types;
+using System.Buffers.Binary;
 
 namespace FunCraft.Network.World
 {
@@ -11,13 +12,13 @@ namespace FunCraft.Network.World
     public static class ChunkSerializer
     {
         private const int HmBpe = 9;
-        private const int HmEntriesPerLong = 64 / HmBpe;   // 7
-        private const int HmNumLongs = (256 + HmEntriesPerLong - 1) / HmEntriesPerLong; // 37
+        private const int HmEntriesPerLong = 64 / HmBpe;
+        private const int HmNumLongs = (256 + HmEntriesPerLong - 1) / HmEntriesPerLong;
 
         private const int HmTypeWorldSurface = 1;
         private const int HmTypeMotionBlocking = 4;
 
-        private const int LightSections = 26;  // SectionCount + 2 boundary
+        private const int LightSections = 26;
         private const long AllSectionBits = (1L << LightSections) - 1;
 
         // Indirect (indirect-mapped) mode thresholds for block states:
@@ -29,7 +30,7 @@ namespace FunCraft.Network.World
 
         /// <summary>
         /// Serialises <paramref name="column"/> to a new byte array.
-        /// <br/>This is the payload written AFTER the two chunk coordinate ints in
+        /// This is the payload written AFTER the two chunk coordinate ints in
         /// <c>ChunkDataPacket</c>.
         /// </summary>
         public static byte[] Serialize(ChunkColumn column)
@@ -94,6 +95,7 @@ namespace FunCraft.Network.World
 
             WriteVarInt(s, numLongs);
 
+            var longIndex = 0;
             var shift = 0;
             var current = 0L;
 
@@ -108,6 +110,7 @@ namespace FunCraft.Network.World
                 }
 
                 WriteI64(s, current);
+                longIndex++;
                 current = 0L;
                 shift = 0;
             }
@@ -120,15 +123,50 @@ namespace FunCraft.Network.World
 
         private static void WriteChunkSections(Stream s, ChunkColumn column)
         {
-            using var buf = new MemoryStream(4096);
+            var totalBytes = 0;
             for (var i = 0; i < ChunkColumn.SectionCount; i++)
             {
-                WriteSection(buf, column.GetSection(i));
+                totalBytes += MeasureSection(column.GetSection(i));
             }
 
-            var bytes = buf.ToArray();
-            WriteVarInt(s, bytes.Length);
-            s.Write(bytes);
+            WriteVarInt(s, totalBytes);
+
+            for (var i = 0; i < ChunkColumn.SectionCount; i++)
+            {
+                WriteSection(s, column.GetSection(i));
+            }
+        }
+
+        private static int MeasureSection(ChunkSection section)
+        {
+            var size = 2;
+            size += MeasureBlockStateContainer(section);
+            size += 2;
+            return size;
+        }
+
+        private static int MeasureBlockStateContainer(ChunkSection section)
+        {
+            if (section.IsUniform(out var uniform))
+            {
+                return 1 + VarInt.GetSize(uniform.Id);
+            }
+
+            var palette = BuildPalette(section, out var bpe);
+            if (bpe <= MaxIndirectBpe)
+            {
+                var entriesPerLong = 64 / bpe;
+                var numLongs = (ChunkSection.Volume + entriesPerLong - 1) / entriesPerLong;
+
+                return 1 + VarInt.GetSize(palette.Count) + palette.Sum(VarInt.GetSize) + numLongs * 8;
+            }
+            else
+            {
+                const int entriesPerLong = 64 / DirectBpe;
+                const int numLongs = (ChunkSection.Volume + entriesPerLong - 1) / entriesPerLong;
+
+                return 1 + numLongs * 8;
+            }
         }
 
         private static void WriteSection(Stream s, ChunkSection section)
@@ -168,7 +206,9 @@ namespace FunCraft.Network.World
         {
             var set = new HashSet<int>();
             foreach (var b in section.Blocks)
-                set.Add(b);
+            {
+                set.Add(b.Id);
+            }
 
             var palette = new List<int>(set);
             palette.Sort();
@@ -183,7 +223,9 @@ namespace FunCraft.Network.World
         {
             var reverseMap = new Dictionary<int, int>(palette.Count);
             for (var i = 0; i < palette.Count; i++)
+            {
                 reverseMap[palette[i]] = i;
+            }
 
             var entriesPerLong = 64 / bpe;
             var numLongs = (ChunkSection.Volume + entriesPerLong - 1) / entriesPerLong;
@@ -192,13 +234,12 @@ namespace FunCraft.Network.World
             var blocks = section.Blocks;
             for (var i = 0; i < blocks.Length; i++)
             {
-                var paletteIndex = reverseMap[blocks[i]];
+                var paletteIndex = reverseMap[blocks[i].Id];
                 var longIndex = i / entriesPerLong;
                 var shift = (i % entriesPerLong) * bpe;
                 longs[longIndex] |= ((long)paletteIndex) << shift;
             }
 
-            //WriteVarInt(s, numLongs);
             foreach (var l in longs)
             {
                 WriteI64(s, l);
@@ -216,7 +257,7 @@ namespace FunCraft.Network.World
             {
                 var longIndex = i / entriesPerLong;
                 var shift = (i % entriesPerLong) * DirectBpe;
-                longs[longIndex] |= (long)blocks[i] << shift;
+                longs[longIndex] |= ((long)blocks[i].Id) << shift;
             }
 
             foreach (var l in longs)

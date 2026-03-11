@@ -168,7 +168,7 @@ namespace FunCraft.Network.World
         {
             var set = new HashSet<int>();
             foreach (var b in section.Blocks)
-                set.Add(b.Id);
+                set.Add(b);
 
             var palette = new List<int>(set);
             palette.Sort();
@@ -192,7 +192,7 @@ namespace FunCraft.Network.World
             var blocks = section.Blocks;
             for (var i = 0; i < blocks.Length; i++)
             {
-                var paletteIndex = reverseMap[blocks[i].Id];
+                var paletteIndex = reverseMap[blocks[i]];
                 var longIndex = i / entriesPerLong;
                 var shift = (i % entriesPerLong) * bpe;
                 longs[longIndex] |= ((long)paletteIndex) << shift;
@@ -216,7 +216,7 @@ namespace FunCraft.Network.World
             {
                 var longIndex = i / entriesPerLong;
                 var shift = (i % entriesPerLong) * DirectBpe;
-                longs[longIndex] |= ((long)blocks[i].Id) << shift;
+                longs[longIndex] |= (long)blocks[i] << shift;
             }
 
             foreach (var l in longs)

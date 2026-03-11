@@ -4,10 +4,12 @@ namespace FunCraft.Protocol.Registry
 {
     using Packets.Registry.Outgoing;
     using Properties;
+    using Types;
 
     public static class RegistryLoader
     {
         public static IReadOnlyList<RegistryDataPacket> Packets { get; private set; } = [];
+        public static IReadOnlyList<ReadOnlyMemory<byte>> FramedPackets { get; private set; } = [];
 
         public static void Load()
         {
@@ -43,6 +45,31 @@ namespace FunCraft.Protocol.Registry
             }
 
             Packets = packets;
+
+            var framed = new List<ReadOnlyMemory<byte>>(packets.Count);
+            foreach (var p in packets)
+            {
+                framed.Add(FramePacket(p));
+            }
+
+            FramedPackets = framed;
+
+            Packets = [];
+        }
+
+        private static ReadOnlyMemory<byte> FramePacket(RegistryDataPacket p)
+        {
+            var payloadLen = p.GetLength();
+            var idLen = VarInt.GetSize(p.PacketId);
+            var totalLen = payloadLen + idLen;
+            var frameLen = VarInt.GetSize(totalLen) + totalLen;
+            var buf = new byte[frameLen];
+            var writer = new IO.PacketWriter(buf);
+            writer.WriteVarInt(totalLen);
+            writer.WriteVarInt(p.PacketId);
+            p.Write(buf.AsSpan(writer.BytesWritten), out _);
+
+            return buf.AsMemory();
         }
 
         private static int ReadVarInt(byte[] data, ref int pos)

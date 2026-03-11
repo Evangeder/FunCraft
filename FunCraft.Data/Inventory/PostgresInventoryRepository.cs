@@ -15,6 +15,8 @@ namespace FunCraft.Data.Inventory
 
         public async Task<HotbarSlot[]?> GetHotbarAsync(Guid uuid, CancellationToken ct = default)
         {
+            Console.WriteLine($"Reading inventory for {uuid}");
+
             await using var cmd = db.CreateCommand(
                 """
                 SELECT slot, item_data
@@ -47,6 +49,8 @@ namespace FunCraft.Data.Inventory
 
         public async Task SaveHotbarAsync(Guid uuid, HotbarSlot[] hotbar, CancellationToken ct = default)
         {
+            Console.WriteLine($"Saving inventory for {uuid}");
+
             await using var conn = await db.OpenConnectionAsync(ct);
             await using var tr = await conn.BeginTransactionAsync(ct);
 

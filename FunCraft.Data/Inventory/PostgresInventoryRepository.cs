@@ -1,5 +1,4 @@
-﻿using FunCraft.Data.Inventory;
-using Npgsql;
+﻿using Npgsql;
 using System.Text.RegularExpressions;
 
 namespace FunCraft.Data.Inventory
@@ -15,8 +14,6 @@ namespace FunCraft.Data.Inventory
 
         public async Task<HotbarSlot[]?> GetHotbarAsync(Guid uuid, CancellationToken ct = default)
         {
-            Console.WriteLine($"Reading inventory for {uuid}");
-
             await using var cmd = db.CreateCommand(
                 """
                 SELECT slot, item_data
@@ -39,7 +36,6 @@ namespace FunCraft.Data.Inventory
                 if (m.Success)
                 {
                     hotbar[slot] = new HotbarSlot(ItemId: int.Parse(m.Groups[1].ValueSpan), Count: int.Parse(m.Groups[2].ValueSpan));
-                    Console.WriteLine($"Readed inventory from database: {hotbar[slot].ItemId}, qty: {hotbar[slot].Count}");
                 }
             }
 
@@ -49,8 +45,6 @@ namespace FunCraft.Data.Inventory
 
         public async Task SaveHotbarAsync(Guid uuid, HotbarSlot[] hotbar, CancellationToken ct = default)
         {
-            Console.WriteLine($"Saving inventory for {uuid}");
-
             await using var conn = await db.OpenConnectionAsync(ct);
             await using var tr = await conn.BeginTransactionAsync(ct);
 
@@ -73,8 +67,6 @@ namespace FunCraft.Data.Inventory
                 {
                     continue;
                 }
-
-                Console.WriteLine($"Saved inventory to database: {hotbar[i].ItemId}, qty: {hotbar[i].Count}");
 
                 var json = $$$"""{"id":{{{hotbar[i].ItemId}}},"count":{{{hotbar[i].Count}}}}""";
 

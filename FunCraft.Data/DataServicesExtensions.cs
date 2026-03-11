@@ -33,7 +33,8 @@ namespace FunCraft.Data
 
             services.AddSingleton<DbMigrator>();
             services.AddSingleton<IPlayerRepository, PostgresPlayerRepository>();
-            services.AddSingleton<IInventoryRepository, PostgresInventoryRepository>();
+            services.AddSingleton<PostgresInventoryRepository>();
+            services.AddSingleton<IInventoryRepository, CachedInventoryRepository>();
             services.AddSingleton<ISessionStore, RedisSessionStore>();
 
             return services;

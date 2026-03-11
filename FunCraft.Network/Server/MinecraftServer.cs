@@ -1,6 +1,4 @@
-﻿using System.Linq;
-using FunCraft.World;
-using Microsoft.Extensions.Configuration;
+﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Net;
@@ -8,11 +6,12 @@ using System.Net.Sockets;
 
 namespace FunCraft.Network.Server
 {
+    using FunCraft.World;
     using Commands;
     using Connections;
     using Data.Players;
     using Data.Sessions;
-    using FunCraft.Data.Inventory;
+    using Data.Inventory;
     using Players;
 
     public class MinecraftServer(IConfiguration config, ILogger<MinecraftServer> logger, IWorldSource world, IPlayerRepository players,
@@ -52,7 +51,7 @@ namespace FunCraft.Network.Server
         private async Task HandleConnectionAsync(Socket socket, CancellationToken ct)
         {
             await using var connection = new ClientConnection(
-                socket, world, players, inventory, sessions, registry, commands, _motd, _maxPlayers);
+                socket, world, players, inventory, sessions, registry, commands, _serverName, _motd, _maxPlayers);
             await connection.RunAsync(ct);
         }
 

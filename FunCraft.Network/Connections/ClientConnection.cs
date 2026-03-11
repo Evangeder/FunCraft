@@ -5,18 +5,17 @@ using System.Net.Sockets;
 
 namespace FunCraft.Network.Connections
 {
+    using FunCraft.World;
     using Commands;
     using Data.Players;
     using Data.Sessions;
+    using Data.Inventory;
+    using Handlers;
     using Players;
+    using Protocol.IO;
     using Protocol.Packets;
     using Protocol.Packets.Play.Outgoing;
     using Protocol.Types;
-    using Protocol.IO;
-    using Handlers;
-
-    using global::FunCraft.World;
-    using FunCraft.Data.Inventory;
 
     public sealed class ClientConnection : IPacketSender, IAsyncDisposable
     {
@@ -28,6 +27,7 @@ namespace FunCraft.Network.Connections
 
         private readonly PlayerContext _ctx;
         private readonly IPlayerRepository _players;
+        private readonly IInventoryRepository _inventory;
         private readonly ISessionStore _sessions;
         private readonly IPlayerRegistry _registry;
 
@@ -40,10 +40,11 @@ namespace FunCraft.Network.Connections
         private ConnectionState _connectionState = ConnectionState.Handshaking;
 
         public ClientConnection(Socket socket, IWorldSource world, IPlayerRepository players, IInventoryRepository inventory,
-            ISessionStore sessions, IPlayerRegistry registry, CommandDispatcher commands, string motd, int maxPlayers)
+            ISessionStore sessions, IPlayerRegistry registry, CommandDispatcher commands, string serverName, string motd, int maxPlayers)
         {
             _socket = socket;
             _players = players;
+            _inventory = inventory;
             _sessions = sessions;
             _registry = registry;
 
@@ -187,11 +188,13 @@ namespace FunCraft.Network.Connections
                         Yaw = _ctx.Yaw,
                         Pitch = _ctx.Pitch,
                     });
+
+                    await _inventory.SaveHotbarAsync(_ctx.Uuid, _ctx.Hotbar);
                     await _sessions.EndAsync(_ctx.Uuid, DateTimeOffset.UtcNow);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[ClientConnection] persist failed: {ex.Message}");
+                    Console.WriteLine($"[ClientConnection] persist failed: {ex}");
                 }
             }
 
@@ -233,7 +236,27 @@ namespace FunCraft.Network.Connections
                     _sendLock.Release();
                 }
             }
-            finally { ArrayPool<byte>.Shared.Return(buffer); }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
+
+        public async ValueTask SendRawAsync(ReadOnlyMemory<byte> framed, CancellationToken ct)
+        {
+            await _sendLock.WaitAsync(ct);
+            try
+            {
+                while (framed.Length > 0)
+                {
+                    var sent = await _socket.SendAsync(framed, ct);
+                    framed = framed[sent..];
+                }
+            }
+            finally
+            {
+                _sendLock.Release();
+            }
         }
     }
 }

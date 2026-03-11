@@ -31,6 +31,8 @@ namespace FunCraft.Network.Handlers
 
         private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(10);
 
+        private readonly CommandDispatcher _localCommands = new();
+
         private bool _spawnAcknowledged;
         private long _lastKeepAliveId;
         private int _lastChunkX = int.MinValue;
@@ -102,11 +104,10 @@ namespace FunCraft.Network.Handlers
             registry.Register(self);
 
             await Sender.SendAsync(BuildInfoUpdate([self]), ct);
+            await registry.BroadcastRawAsync(BuildInfoUpdate([self]), excludeUuid: ctx.Uuid, ct);
 
-            await registry.BroadcastAsync(BuildInfoUpdate([self]), excludeUuid: ctx.Uuid, ct);
-
-            commands.Register(new TestCommand(ctx));
-            commands.Register(new RespawnCommand(ctx));
+            _localCommands.Register(new TestCommand(ctx));
+            _localCommands.Register(new RespawnCommand(ctx));
 
             var savedHotbar = await inventory.GetHotbarAsync(ctx.Uuid, ct);
             if (savedHotbar is not null)
@@ -204,16 +205,16 @@ namespace FunCraft.Network.Handlers
                     break;
 
                 default:
-                    Console.WriteLine($"[PlayHandler] unhandled 0x{packetId:X2}");
+                    //Console.WriteLine($"[PlayHandler] unhandled 0x{packetId:X2}");
                     break;
             }
 
             return ConnectionState.Play;
         }
 
-        /// <summary>
-        /// Sends the initial 5×5 grid on first teleport confirmation.
-        /// </summary>
+        // ─── Chunk streaming ─────────────────────────────────────────────────────
+
+        /// <summary>Sends the initial 5×5 grid on first teleport confirmation.</summary>
         private async ValueTask SendInitialChunksAsync(CancellationToken ct)
         {
             await Sender.SendAsync(new GameEventPacket
@@ -302,8 +303,8 @@ namespace FunCraft.Network.Handlers
         {
             var set = new HashSet<(int, int)>((ViewDistance * 2 + 1) * (ViewDistance * 2 + 1));
             for (var dx = -ViewDistance; dx <= ViewDistance; dx++)
-                for (var dz = -ViewDistance; dz <= ViewDistance; dz++)
-                    set.Add((cx + dx, cz + dz));
+            for (var dz = -ViewDistance; dz <= ViewDistance; dz++)
+                set.Add((cx + dx, cz + dz));
             return set;
         }
 
@@ -356,7 +357,10 @@ namespace FunCraft.Network.Handlers
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new PlayerActionPacket();
-            if (!packet.TryRead(ref reader)) return;
+            if (!packet.TryRead(ref reader))
+            {
+                return;
+            }
 
             // Only break on FinishedDigging.
             // Creative mode sends only StartedDigging — TODO when game-mode tracking is added.
@@ -420,7 +424,10 @@ namespace FunCraft.Network.Handlers
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new SetHeldItemPacket();
-            if (!packet.TryRead(ref reader)) return;
+            if (!packet.TryRead(ref reader))
+            {
+                return;
+            }
             ctx.HeldSlot = Math.Clamp(packet.Slot, (short)0, (short)8);
         }
 
@@ -430,16 +437,16 @@ namespace FunCraft.Network.Handlers
             var packet = new UseItemOnPacket();
             if (!packet.TryRead(ref reader)) return;
 
-            // Always ACK first so the client doesn't desync regardless of outcome.
             await Sender.SendAsync(new AcknowledgeBlockChangePacket { SequenceId = packet.Sequence }, ct);
 
-            // Look up what item is in the held slot.
             var held = ctx.Hotbar[ctx.HeldSlot];
-            if (held.IsEmpty) return; // empty hand
+            if (held.IsEmpty)
+            {
+                return;
+            }
 
             if (!ItemToBlockState.TryGetValue(held.ItemId, out var blockStateId)) return;
 
-            // Calculate placement position: clicked block position + face offset.
             if (packet.Face < 0 || packet.Face >= FaceOffsets.Length) return;
             var (dx, dy, dz) = FaceOffsets[packet.Face];
             var placePos = new BlockPosition(
@@ -447,7 +454,6 @@ namespace FunCraft.Network.Handlers
                 packet.Location.Y + dy,
                 packet.Location.Z + dz);
 
-            // Don't place inside the player.
             var playerBlockX = (int)Math.Floor(ctx.X);
             var playerBlockY = (int)Math.Floor(ctx.Y);
             var playerBlockZ = (int)Math.Floor(ctx.Z);
@@ -456,17 +462,16 @@ namespace FunCraft.Network.Handlers
                 placePos.Z == playerBlockZ)
                 return;
 
-            // Write into world and broadcast to all players.
             var column = world.GetChunk(
                 (int)Math.Floor((double)placePos.X / 16),
                 (int)Math.Floor((double)placePos.Z / 16));
             column.SetBlock(placePos.X, placePos.Y, placePos.Z, new BlockState(blockStateId));
 
-            await registry.BroadcastAsync(new BlockUpdatePacket
+            await registry.BroadcastRawAsync(new BlockUpdatePacket
             {
                 Location = placePos,
                 BlockState = blockStateId,
-            }, ct);
+            }, Guid.Empty, ct);
         }
 
         private async ValueTask HandleChatAsync(ReadOnlySequence<byte> payload, CancellationToken ct)
@@ -478,16 +483,18 @@ namespace FunCraft.Network.Handlers
             var message = packet.Message.Trim();
             if (string.IsNullOrEmpty(message)) return;
 
-            if (await commands.TryDispatchAsync(message,
-                    respond: text => Sender.SendAsync(new SystemChatMessagePacket {Content = text}, ct).AsTask(),
-                    sender: Sender,
-                    ct))
+            //if (await _localCommands.TryDispatchAsync(message, respond, Sender, ct))
+            //{
+            //    return;
+            //}
+
+            if (await commands.TryDispatchAsync(message, respond: text => Sender.SendAsync(new SystemChatMessagePacket {Content = text}, ct).AsTask(), sender: Sender, ct))
             {
                 return;
             }
 
             var chatLine = $"§7<§f{ctx.Username}§7> {message}";
-            await registry.BroadcastAsync(new SystemChatMessagePacket { Content = chatLine }, ct);
+            await registry.BroadcastRawAsync(new SystemChatMessagePacket { Content = chatLine }, Guid.Empty, ct);
         }
 
         private async ValueTask HandleChatCommandAsync(ReadOnlySequence<byte> payload, CancellationToken ct)
@@ -497,24 +504,34 @@ namespace FunCraft.Network.Handlers
             if (!packet.TryRead(ref reader)) return;
 
             var withSlash = '/' + packet.Command;
-            await commands.TryDispatchAsync(
-                withSlash,
-                respond: text => Sender.SendAsync(new SystemChatMessagePacket { Content = text }, ct).AsTask(),
-                sender: Sender,
-                ct);
+            Func<string, Task> respond = text => Sender.SendAsync(new SystemChatMessagePacket { Content = text }, ct).AsTask();
+
+            if (!await _localCommands.TryDispatchAsync(withSlash, respond, Sender, ct))
+            {
+                await commands.TryDispatchAsync(withSlash, respond, Sender, ct);
+            }
         }
 
-        private static PlayerInfoUpdatePacket BuildInfoUpdate(IReadOnlyList<ConnectedPlayer> players) =>
-            new()
+        private static PlayerInfoUpdatePacket BuildInfoUpdate(IReadOnlyList<ConnectedPlayer> players)
+        {
+            var entries = new PlayerInfoUpdatePacket.PlayerInfoEntry[players.Count];
+            for (var i = 0; i < players.Count; i++)
             {
-                Players = [.. players.Select(p => new PlayerInfoUpdatePacket.PlayerInfoEntry
+                var p = players[i];
+                entries[i] = new PlayerInfoUpdatePacket.PlayerInfoEntry
                 {
                     Uuid = p.Uuid,
                     Username = p.Username,
                     Listed = true,
-                    Latency = 0
-                })]
+                    Latency = 0,
+                };
+            }
+
+            return new PlayerInfoUpdatePacket
+            {
+                Players = entries
             };
+        }
 
         private async Task KeepAliveLoopAsync(CancellationToken ct)
         {
@@ -537,11 +554,14 @@ namespace FunCraft.Network.Handlers
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new ServerboundKeepAlivePacket();
-            if (!packet.TryRead(ref reader)) return;
+            if (!packet.TryRead(ref reader))
+            {
+                return;
+            }
 
             if (packet.KeepAliveId != _lastKeepAliveId)
             {
-                Console.WriteLine($"[PlayHandler] keep-alive mismatch — sent {_lastKeepAliveId}, got {packet.KeepAliveId}");
+                //Console.WriteLine($"[PlayHandler] keep-alive mismatch — sent {_lastKeepAliveId}, got {packet.KeepAliveId}");
             }
         }
 
@@ -551,7 +571,7 @@ namespace FunCraft.Network.Handlers
             var packet = new ChunkBatchReceivedPacket();
             if (packet.TryRead(ref reader))
             {
-                Console.WriteLine($"[PlayHandler] client wants {packet.DesiredChunksPerTick:F2} chunks/tick");
+                //Console.WriteLine($"[PlayHandler] client wants {packet.DesiredChunksPerTick:F2} chunks/tick");
             }
         }
 

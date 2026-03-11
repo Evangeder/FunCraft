@@ -3,6 +3,7 @@
     <File Path=".gitignore" />
     <File Path="docker-compose.yml" />
     <File Path="README.MD" />
+    <File Path="server.json" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="FunCraft.RegistryBuilder/FunCraft.RegistryBuilder.csproj" Id="e6034d8e-3bdd-415d-8b9a-abd608ac55a2" />

@@ -47,7 +47,7 @@ namespace FunCraft.Network.World
             var motionBlocking = ComputeHeightmap(column, includeMotionBlocking: true);
             var worldSurface = ComputeHeightmap(column, includeMotionBlocking: false);
 
-            WriteVarInt(s, 2); // two heightmap entries
+            WriteVarInt(s, 2);
 
             WriteVarInt(s, HmTypeMotionBlocking);
             WritePackedLongs(s, motionBlocking, HmBpe, 256);
@@ -219,7 +219,6 @@ namespace FunCraft.Network.World
                 longs[longIndex] |= ((long)blocks[i].Id) << shift;
             }
 
-            //WriteVarInt(s, numLongs);
             foreach (var l in longs)
             {
                 WriteI64(s, l);
@@ -232,7 +231,6 @@ namespace FunCraft.Network.World
             s.WriteByte(0);
             WriteVarInt(s, 0);
         }
-
 
         private static void WriteBlockEntities(Stream s) => WriteVarInt(s, 0);
 

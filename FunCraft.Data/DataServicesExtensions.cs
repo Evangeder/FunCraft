@@ -4,6 +4,7 @@ using StackExchange.Redis;
 
 namespace FunCraft.Data
 {
+    using Inventory;
     using Migrations;
     using Players;
     using Sessions;
@@ -19,10 +20,7 @@ namespace FunCraft.Data
         /// <param name="redisConnectionString">
         ///   e.g. <c>localhost:6379</c>
         /// </param>
-        public static IServiceCollection AddFunCraftData(
-            this IServiceCollection services,
-            string postgresConnectionString,
-            string redisConnectionString)
+        public static IServiceCollection AddFunCraftData(this IServiceCollection services, string postgresConnectionString, string redisConnectionString)
         {
             // Npgsql data source — pooled, reused for the process lifetime.
             var dataSource = NpgsqlDataSource.Create(postgresConnectionString);
@@ -35,6 +33,7 @@ namespace FunCraft.Data
 
             services.AddSingleton<DbMigrator>();
             services.AddSingleton<IPlayerRepository, PostgresPlayerRepository>();
+            services.AddSingleton<IInventoryRepository, PostgresInventoryRepository>();
             services.AddSingleton<ISessionStore, RedisSessionStore>();
 
             return services;

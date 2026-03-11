@@ -2,7 +2,7 @@
 {
     using Protocol.Packets;
 
-    internal interface IPacketSender
+    public interface IPacketSender
     {
         ValueTask SendAsync(IPacket packet, CancellationToken ct);
     }

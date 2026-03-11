@@ -19,7 +19,7 @@
             string[] args, Func<string, Task> respond, IPacketSender sender, CancellationToken ct)
         {
             ctx.Hotbar[0] = new HotbarSlot(DirtItemId, StackSize);
-
+            
             await sender.SendAsync(new SetContainerSlotPacket
             {
                 WindowId = 0,

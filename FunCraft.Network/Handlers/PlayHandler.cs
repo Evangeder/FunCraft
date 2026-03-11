@@ -106,6 +106,7 @@ namespace FunCraft.Network.Handlers
             await registry.BroadcastAsync(BuildInfoUpdate([self]), excludeUuid: ctx.Uuid, ct);
 
             commands.Register(new TestCommand(ctx));
+            commands.Register(new RespawnCommand(ctx));
 
             var savedHotbar = await inventory.GetHotbarAsync(ctx.Uuid, ct);
             if (savedHotbar is not null)
@@ -506,13 +507,13 @@ namespace FunCraft.Network.Handlers
         private static PlayerInfoUpdatePacket BuildInfoUpdate(IReadOnlyList<ConnectedPlayer> players) =>
             new()
             {
-                Players = players.Select(p => new PlayerInfoUpdatePacket.PlayerInfoEntry
+                Players = [.. players.Select(p => new PlayerInfoUpdatePacket.PlayerInfoEntry
                 {
                     Uuid = p.Uuid,
                     Username = p.Username,
                     Listed = true,
                     Latency = 0
-                }).ToList()
+                })]
             };
 
         private async Task KeepAliveLoopAsync(CancellationToken ct)

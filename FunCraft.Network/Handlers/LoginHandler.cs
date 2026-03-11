@@ -3,7 +3,7 @@
 namespace FunCraft.Network.Handlers
 {
     using Data.Sessions;
-    using FunCraft.Network.Players;
+    using Players;
     using Protocol.Packets;
     using Protocol.Packets.Login.Incoming;
     using Protocol.Packets.Login.Outgoing;

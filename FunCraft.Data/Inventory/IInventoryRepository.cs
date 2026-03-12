@@ -3,12 +3,27 @@
     public interface IInventoryRepository
     {
         /// <summary>
-        /// Returns the hotbar slots for the given player (indices 0–8).
-        /// Empty slots have ItemId == 0. Returns null if the player has no saved inventory.
+        /// Fills <paramref name="destination"/> (must be at least <see cref="HotbarSlot.InventorySize"/>
+        /// elements) with the saved inventory for the player.
+        /// Returns <c>true</c> if the player had saved data; <c>false</c> if they are new
+        /// (destination is left untouched in that case).
         /// </summary>
-        Task<HotbarSlot[]?> GetHotbarAsync(Guid uuid, CancellationToken ct = default);
+        /// <remarks>
+        /// The caller is responsible for renting/returning the buffer, e.g. via
+        /// <c>ArrayPool&lt;HotbarSlot&gt;.Shared</c>.
+        /// </remarks>
+        ValueTask<bool> TryGetInventoryAsync(Guid uuid, Memory<HotbarSlot> destination, CancellationToken ct = default);
 
-        /// <summary>Persists hotbar slots 0–8. Empty slots are deleted.</summary>
-        Task SaveHotbarAsync(Guid uuid, HotbarSlot[] hotbar, CancellationToken ct = default);
+        /// <summary>
+        /// Persists all <see cref="HotbarSlot.InventorySize"/> slots from
+        /// <paramref name="inventory"/>. Empty slots are deleted.
+        /// </summary>
+        ValueTask SaveInventoryAsync(Guid uuid, ReadOnlyMemory<HotbarSlot> inventory, CancellationToken ct = default);
+
+        /// <summary>
+        /// Gets inventory item from given slot.
+        /// </summary>
+        ValueTask<HotbarSlot> GetItem(Guid uuid, Memory<HotbarSlot> inventory,
+            int slot, CancellationToken ct = default);
     }
 }

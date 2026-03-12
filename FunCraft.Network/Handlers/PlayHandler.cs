@@ -1,4 +1,5 @@
 ﻿using System.Buffers;
+using Microsoft.Extensions.Logging;
 
 namespace FunCraft.Network.Handlers
 {
@@ -13,6 +14,15 @@ namespace FunCraft.Network.Handlers
     using Protocol.Packets.Play.Outgoing;
     using Protocol.Types;
     using World;
+
+    public static partial class Log
+    {
+        [LoggerMessage(
+            EventId = 1003,
+            Level = LogLevel.Debug,
+            Message = "Payload: {Payload}")]
+        public static partial void Payload(this ILogger logger, string payload);
+    }
 
     internal class PlayHandler(IWorldSource world, PlayerContext ctx, IPlayerRepository players,
         IInventoryRepository inventory, IPlayerRegistry registry, CommandDispatcher commands) : AsyncHandlerBase
@@ -104,28 +114,37 @@ namespace FunCraft.Network.Handlers
             registry.Register(self);
 
             await Sender.SendAsync(BuildInfoUpdate([self]), ct);
+
             await registry.BroadcastRawAsync(BuildInfoUpdate([self]), excludeUuid: ctx.Uuid, ct);
 
             _localCommands.Register(new TestCommand(ctx));
             _localCommands.Register(new RespawnCommand(ctx));
 
-            var savedHotbar = await inventory.GetHotbarAsync(ctx.Uuid, ct);
-            if (savedHotbar is not null)
+            // Rent a buffer, fill from DB, copy into ctx, return immediately.
+            var rentedInv = ArrayPool<HotbarSlot>.Shared.Rent(HotbarSlot.InventorySize);
+            try
             {
-                for (var i = 0; i < 9; i++)
-                {
-                    if (savedHotbar[i].IsEmpty) continue;
-                    ctx.Hotbar[i] = savedHotbar[i];
-                    await Sender.SendAsync(new SetContainerSlotPacket
-                    {
-                        WindowId = 0,
-                        StateId = 0,
-                        Slot = (short)(36 + i),
-                        ItemId = savedHotbar[i].ItemId,
-                        Count = savedHotbar[i].Count,
-                    }, ct);
-                }
+                rentedInv.AsSpan(0, HotbarSlot.InventorySize).Clear();
+                var hadSaved = await inventory.TryGetInventoryAsync(ctx.Uuid, rentedInv.AsMemory(0, HotbarSlot.InventorySize), ct);
+                if (hadSaved)
+                    rentedInv.AsSpan(0, HotbarSlot.InventorySize).CopyTo(ctx.Inventory);
             }
+            finally
+            {
+                ArrayPool<HotbarSlot>.Shared.Return(rentedInv);
+            }
+
+            // Send the full 46-slot window to the client so it mirrors our server state.
+            var slots = new (int ItemId, int Count)[HotbarSlot.InventorySize];
+            for (var i = 0; i < HotbarSlot.InventorySize; i++)
+                slots[i] = (ctx.Inventory[i].ItemId, ctx.Inventory[i].Count);
+
+            await Sender.SendAsync(new SetContainerContentPacket
+            {
+                WindowId = 0,
+                StateId = ctx.NextStateId(),
+                Slots = slots,
+            }, ct);
 
             _ = KeepAliveLoopAsync(ct);
 
@@ -182,7 +201,7 @@ namespace FunCraft.Network.Handlers
                     break;
 
                 case ClickContainerPacket.Id:
-                    HandleClickContainer(payload);
+                    await HandleClickContainerAsync(payload, ct);
                     break;
 
                 case SetHeldItemPacket.Id:
@@ -201,8 +220,12 @@ namespace FunCraft.Network.Handlers
                 case 0x2A: // Player Input
                 case 0x2B: // Player Loaded
                 case 0x3C: // Swing Arm
-                case 0x12: // Close Container
                     break;
+
+                case 0x12: // Close Container
+                    HandleCloseContainer();
+                    break;
+
 
                 default:
                     Console.WriteLine($"[PlayHandler] unhandled 0x{packetId:X2}");
@@ -408,28 +431,304 @@ namespace FunCraft.Network.Handlers
             ( +1,  0,  0 ),  // 5  +X  east
         ];
 
-        private void HandleClickContainer(ReadOnlySequence<byte> payload)
+        private async ValueTask HandleClickContainerAsync(ReadOnlySequence<byte> payload, CancellationToken ct)
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new ClickContainerPacket();
             if (!packet.TryRead(ref reader)) return;
-
-            // Only mirror player inventory (window 0).
             if (packet.WindowId != 0) return;
 
-            // Apply each reported slot change to our server-side hotbar.
-            // Wire slots 36–44 = hotbar indices 0–8.
-            foreach (var (wireSlot, itemId, count) in packet.ChangedSlots)
+            switch (packet.Mode)
             {
-                if (wireSlot is < 36 or > 44)
-                {
-                    continue;
-                }
+                case 0: ApplyNormalClick(packet.Slot, packet.Button); break;
+                case 1: ApplyShiftClick(packet.Slot); break;
+                case 2: ApplyHotbarSwap(packet.Slot, packet.Button); break;
+                case 5: ApplyDrag(packet.Slot, packet.Button); break;
+                case 6: ApplyDoubleClick(); break;
+                    // mode 3 = middle-click (creative) — NYI
+            }
 
-                var hotbarIndex = wireSlot - 36;
-                ctx.Hotbar[hotbarIndex] = itemId > 0
-                    ? new HotbarSlot(itemId, count)
-                    : HotbarSlot.Empty;
+            // Confirm server-authoritative state back to client so StateId stays in sync.
+            // Without this the client accumulates a delta and re-sends stale slot state,
+            // which overwrites earlier placements on the server.
+            await SendInventorySync(ct);
+        }
+
+        // ── Mode 6 — double-click: collect matching items into cursor ────────────
+
+        private void ApplyDoubleClick()
+        {
+            if (ctx.CursorItem.IsEmpty) return;
+
+            const int max = 64;
+            if (ctx.CursorItem.Count >= max) return;
+
+            // Sweep all 46 slots; partial stacks first, then full stacks.
+            // This matches vanilla's behaviour: partials are consumed before full stacks.
+            Sweep(fullStacksOnly: false);
+            if (ctx.CursorItem.Count < max)
+                Sweep(fullStacksOnly: true);
+
+            void Sweep(bool fullStacksOnly)
+            {
+                for (var i = 0; i < HotbarSlot.InventorySize && ctx.CursorItem.Count < max; i++)
+                {
+                    ref var inv = ref ctx.Inventory[i];
+                    if (inv.IsEmpty || inv.ItemId != ctx.CursorItem.ItemId) continue;
+                    if (fullStacksOnly && inv.Count < max) continue;
+                    if (!fullStacksOnly && inv.Count >= max) continue;
+
+                    var take = Math.Min(max - ctx.CursorItem.Count, inv.Count);
+                    ctx.CursorItem = new HotbarSlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count + take);
+                    var left = inv.Count - take;
+                    inv = left > 0 ? new HotbarSlot(inv.ItemId, left) : HotbarSlot.Empty;
+                }
+            }
+        }
+
+
+        private ValueTask SendInventorySync(CancellationToken ct)
+        {
+            var slots = new (int ItemId, int Count)[HotbarSlot.InventorySize];
+            for (var i = 0; i < HotbarSlot.InventorySize; i++)
+                slots[i] = (ctx.Inventory[i].ItemId, ctx.Inventory[i].Count);
+
+            return Sender.SendAsync(new SetContainerContentPacket
+            {
+                WindowId = 0,
+                StateId = ctx.NextStateId(),
+                Slots = slots,
+                CarriedItemId = ctx.CursorItem.ItemId,
+                CarriedItemCount = ctx.CursorItem.Count,
+            }, ct);
+        }
+
+        // ── Close Container ──────────────────────────────────────────────────────
+
+        private void HandleCloseContainer()
+        {
+            if (ctx.CursorItem.IsEmpty) return;
+
+            // Try to return cursor item to the first available inventory slot (9-44).
+            // TODO: if no space, spawn a dropped item entity instead.
+            for (var i = 9; i <= 44; i++)
+            {
+                if (!ctx.Inventory[i].IsEmpty) continue;
+                ctx.Inventory[i] = ctx.CursorItem;
+                ctx.CursorItem = HotbarSlot.Empty;
+                return;
+            }
+
+            // No free slot — item is lost for now (TODO: drop on ground).
+            ctx.CursorItem = HotbarSlot.Empty;
+        }
+
+
+        private void ApplyNormalClick(short slot, byte button)
+        {
+            if (slot < 0)
+            {
+                if (button == 0)
+                    ctx.CursorItem = HotbarSlot.Empty;
+                else if (!ctx.CursorItem.IsEmpty)
+                    ctx.CursorItem = ctx.CursorItem.Count > 1
+                        ? new HotbarSlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count - 1)
+                        : HotbarSlot.Empty;
+                return;
+            }
+
+            if (slot >= HotbarSlot.InventorySize) return;
+            ref var inv = ref ctx.Inventory[slot];
+
+            if (button == 0)
+            {
+                if (ctx.CursorItem.IsEmpty)
+                {
+                    ctx.CursorItem = inv;
+                    inv = HotbarSlot.Empty;
+                }
+                else if (inv.IsEmpty)
+                {
+                    inv = ctx.CursorItem;
+                    ctx.CursorItem = HotbarSlot.Empty;
+                }
+                else if (ctx.CursorItem.ItemId == inv.ItemId)
+                {
+                    var total = ctx.CursorItem.Count + inv.Count;
+                    const int max = 64;
+                    inv = new HotbarSlot(inv.ItemId, Math.Min(total, max));
+                    ctx.CursorItem = total > max
+                        ? new HotbarSlot(ctx.CursorItem.ItemId, total - max)
+                        : HotbarSlot.Empty;
+                }
+                else
+                {
+                    (ctx.CursorItem, inv) = (inv, ctx.CursorItem);
+                }
+            }
+            else if (button == 1)
+            {
+                if (ctx.CursorItem.IsEmpty && !inv.IsEmpty)
+                {
+                    var take = (inv.Count + 1) / 2;
+                    var leave = inv.Count - take;
+                    ctx.CursorItem = new HotbarSlot(inv.ItemId, take);
+                    inv = leave > 0 ? new HotbarSlot(inv.ItemId, leave) : HotbarSlot.Empty;
+                }
+                else if (!ctx.CursorItem.IsEmpty && inv.IsEmpty)
+                {
+                    inv = new HotbarSlot(ctx.CursorItem.ItemId, 1);
+                    ctx.CursorItem = ctx.CursorItem.Count > 1
+                        ? new HotbarSlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count - 1)
+                        : HotbarSlot.Empty;
+                }
+                else if (!ctx.CursorItem.IsEmpty && ctx.CursorItem.ItemId == inv.ItemId)
+                {
+                    if (inv.Count < 64)
+                    {
+                        inv = new HotbarSlot(inv.ItemId, inv.Count + 1);
+                        ctx.CursorItem = ctx.CursorItem.Count > 1
+                            ? new HotbarSlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count - 1)
+                            : HotbarSlot.Empty;
+                    }
+                }
+                else if (!ctx.CursorItem.IsEmpty && !inv.IsEmpty)
+                {
+                    (ctx.CursorItem, inv) = (inv, ctx.CursorItem);
+                }
+            }
+        }
+
+        private void ApplyShiftClick(short slot)
+        {
+            if (slot < 0 || slot >= HotbarSlot.InventorySize) return;
+            ref var src = ref ctx.Inventory[slot];
+            if (src.IsEmpty) return;
+
+            var (destStart, destEnd) = slot switch
+            {
+                >= 36 and <= 44 => (9, 35),   // hotbar   → main inventory
+                >= 9 and <= 35 => (36, 44),  // main     → hotbar
+                _ => (9, 44),   // armor/crafting → main+hotbar
+            };
+
+            for (var i = destStart; i <= destEnd && !src.IsEmpty; i++)
+            {
+                ref var dest = ref ctx.Inventory[i];
+                if (!dest.IsEmpty && dest.ItemId == src.ItemId && dest.Count < 64)
+                {
+                    var transfer = Math.Min(64 - dest.Count, src.Count);
+                    dest = new HotbarSlot(dest.ItemId, dest.Count + transfer);
+                    var remaining = src.Count - transfer;
+                    src = remaining > 0 ? new HotbarSlot(src.ItemId, remaining) : HotbarSlot.Empty;
+                }
+            }
+
+            for (var i = destStart; i <= destEnd && !src.IsEmpty; i++)
+            {
+                ref var dest = ref ctx.Inventory[i];
+                if (dest.IsEmpty)
+                {
+                    dest = src;
+                    src = HotbarSlot.Empty;
+                }
+            }
+        }
+
+        private void ApplyHotbarSwap(short slot, byte button)
+        {
+            if (slot < 0 || slot >= HotbarSlot.InventorySize) return;
+            if (button > 8) return;
+            var hotbarSlot = 36 + button;
+            (ctx.Inventory[slot], ctx.Inventory[hotbarSlot]) = (ctx.Inventory[hotbarSlot], ctx.Inventory[slot]);
+        }
+
+        /// <summary>
+        /// Inventory Drag/Paint
+        /// <br/>0 = Start-left
+        /// <br/>1 = add-left,
+        /// <br/>2 = end-left,
+        /// <br/>4 = start-right,
+        /// <br/>5 = add-right,
+        /// <br/>6 = end-right
+        /// </summary>
+        private void ApplyDrag(short slot, byte button)
+        {
+            switch (button)
+            {
+                case 0: // begin left-drag
+                case 4: // begin right-drag
+                    ctx.DragButton = button == 0 ? 0 : 1;
+                    ctx.DragSlots.Clear();
+                    break;
+
+                case 1: // add slot to left-drag
+                case 5: // add slot to right-drag
+                    if (ctx.DragButton < 0) return;
+                    if (slot >= 0 && slot < HotbarSlot.InventorySize)
+                        ctx.DragSlots.Add(slot);
+                    break;
+
+                case 2: // commit left-drag — distribute cursor stack evenly
+                    {
+                        if (ctx.DragButton != 0 || ctx.DragSlots.Count == 0 || ctx.CursorItem.IsEmpty) break;
+
+                        // Only target slots that are empty or hold the same item.
+                        var targets = ctx.DragSlots
+                            .Where(s => ctx.Inventory[s].IsEmpty || ctx.Inventory[s].ItemId == ctx.CursorItem.ItemId)
+                            .OrderBy(s => s)
+                            .ToList();
+
+                        if (targets.Count == 0) break;
+
+                        var perSlot = ctx.CursorItem.Count / targets.Count;
+                        if (perSlot < 1) break; // not enough items to spread
+
+                        var remaining = ctx.CursorItem.Count;
+                        foreach (var s in targets)
+                        {
+                            ref var inv = ref ctx.Inventory[s];
+                            var current = inv.IsEmpty ? 0 : inv.Count;
+                            var canAdd = Math.Min(64 - current, perSlot);
+                            if (canAdd <= 0) continue;
+                            inv = new HotbarSlot(ctx.CursorItem.ItemId, current + canAdd);
+                            remaining -= canAdd;
+                        }
+
+                        ctx.CursorItem = remaining > 0
+                            ? new HotbarSlot(ctx.CursorItem.ItemId, remaining)
+                            : HotbarSlot.Empty;
+
+                        ctx.DragButton = -1;
+                        ctx.DragSlots.Clear();
+                        break;
+                    }
+
+                case 6: // commit right-drag — place one item in each targeted slot
+                    {
+                        if (ctx.DragButton != 1 || ctx.DragSlots.Count == 0 || ctx.CursorItem.IsEmpty) break;
+
+                        var remaining = ctx.CursorItem.Count;
+                        foreach (var s in ctx.DragSlots.OrderBy(x => x))
+                        {
+                            if (remaining <= 0) break;
+                            ref var inv = ref ctx.Inventory[s];
+                            if (!inv.IsEmpty && inv.ItemId != ctx.CursorItem.ItemId) continue;
+                            if (!inv.IsEmpty && inv.Count >= 64) continue;
+
+                            var current = inv.IsEmpty ? 0 : inv.Count;
+                            inv = new HotbarSlot(ctx.CursorItem.ItemId, current + 1);
+                            remaining--;
+                        }
+
+                        ctx.CursorItem = remaining > 0
+                            ? new HotbarSlot(ctx.CursorItem.ItemId, remaining)
+                            : HotbarSlot.Empty;
+
+                        ctx.DragButton = -1;
+                        ctx.DragSlots.Clear();
+                        break;
+                    }
             }
         }
 
@@ -458,7 +757,7 @@ namespace FunCraft.Network.Handlers
 
             await Sender.SendAsync(new AcknowledgeBlockChangePacket { SequenceId = packet.Sequence }, ct);
 
-            var held = ctx.Hotbar[ctx.HeldSlot];
+            var held = ctx.HeldItem;
             if (held.IsEmpty)
             {
                 return;
@@ -489,6 +788,8 @@ namespace FunCraft.Network.Handlers
             var column = world.GetChunk((int)Math.Floor((double)placePos.X / 16), (int)Math.Floor((double)placePos.Z / 16));
             column.SetBlock(placePos.X, placePos.Y, placePos.Z, new BlockState(blockStateId));
 
+            ctx.HeldItem = ctx.HeldItem.Count > 1 ? new HotbarSlot(ctx.HeldItem.ItemId, ctx.HeldItem.Count - 1) : HotbarSlot.Empty;
+
             await registry.BroadcastRawAsync(new BlockUpdatePacket
             {
                 Location = placePos,
@@ -513,7 +814,7 @@ namespace FunCraft.Network.Handlers
                 return;
             }
 
-            if (await commands.TryDispatchAsync(message, respond: text => Sender.SendAsync(new SystemChatMessagePacket {Content = text}, ct).AsTask(), sender: Sender, ct))
+            if (await commands.TryDispatchAsync(message, respond: text => Sender.SendAsync(new SystemChatMessagePacket { Content = text }, ct).AsTask(), sender: Sender, ct))
             {
                 return;
             }

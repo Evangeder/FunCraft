@@ -14,14 +14,35 @@ namespace FunCraft.Network.Players
         public float Yaw { get; set; }
         public float Pitch { get; set; }
 
-        /// <summary>
-        /// Currently selected hotbar slot (0–8).
-        /// </summary>
+        /// <summary>Currently selected hotbar slot (0–8).</summary>
         public int HeldSlot { get; set; } = 0;
 
         /// <summary>
-        /// Server-side hotbar: item ID + count per slot (index 0–8).
+        /// Full window-0 inventory (46 slots).
+        /// Wire-slot layout:
+        ///   0        crafting output
+        ///   1–4      crafting grid
+        ///   5–8      armour
+        ///   9–35     main inventory
+        ///   36–44    hotbar (HeldSlot 0–8)
+        ///   45       off-hand
         /// </summary>
-        public HotbarSlot[] Hotbar { get; } = new HotbarSlot[9];
+        public HotbarSlot[] Inventory { get; } = new HotbarSlot[HotbarSlot.InventorySize];
+
+        /// <summary>Convenience: the item currently held in-hand.</summary>
+        public ref HotbarSlot HeldItem => ref Inventory[36 + HeldSlot];
+
+        /// <summary>Item attached to the player's cursor during inventory interactions.</summary>
+        public HotbarSlot CursorItem { get; set; } = HotbarSlot.Empty;
+
+        // ── Drag / paint state (mode 5) ──────────────────────────────────────────
+        // -1 = not dragging; 0 = left-drag (distribute evenly); 1 = right-drag (place one each)
+        public int DragButton { get; set; } = -1;
+        public HashSet<int> DragSlots { get; } = [];
+
+        // ── state-ID counter for container sync ─────────────────────────────
+        private int _stateId;
+        public int NextStateId() => ++_stateId;
+        public int CurrentStateId => _stateId;
     }
 }

@@ -158,11 +158,11 @@ namespace FunCraft.Network.Handlers
                     break;
 
                 case SetPlayerPositionPacket.Id:
-                    HandleSetPlayerPosition(payload, ct);
+                    HandleSetPlayerPositionAsync(payload, ct);
                     break;
 
                 case SetPlayerPositionAndRotationPacket.Id:
-                    HandleSetPlayerPositionAndRotation(payload, ct);
+                    HandleSetPlayerPositionAndRotationAsync(payload, ct);
                     break;
 
                 case SetPlayerRotationPacket.Id:
@@ -205,16 +205,16 @@ namespace FunCraft.Network.Handlers
                     break;
 
                 default:
-                    //Console.WriteLine($"[PlayHandler] unhandled 0x{packetId:X2}");
+                    Console.WriteLine($"[PlayHandler] unhandled 0x{packetId:X2}");
                     break;
             }
 
             return ConnectionState.Play;
         }
 
-        // ─── Chunk streaming ─────────────────────────────────────────────────────
-
-        /// <summary>Sends the initial 5×5 grid on first teleport confirmation.</summary>
+        /// <summary>
+        /// Sends the initial 5×5 grid on first teleport confirmation.
+        /// </summary>
         private async ValueTask SendInitialChunksAsync(CancellationToken ct)
         {
             await Sender.SendAsync(new GameEventPacket
@@ -248,7 +248,6 @@ namespace FunCraft.Network.Handlers
             {
                 return;
             }
-
             try
             {
                 _lastChunkX = newCx;
@@ -303,35 +302,46 @@ namespace FunCraft.Network.Handlers
         {
             var set = new HashSet<(int, int)>((ViewDistance * 2 + 1) * (ViewDistance * 2 + 1));
             for (var dx = -ViewDistance; dx <= ViewDistance; dx++)
-            for (var dz = -ViewDistance; dz <= ViewDistance; dz++)
-                set.Add((cx + dx, cz + dz));
+            {
+                for (var dz = -ViewDistance; dz <= ViewDistance; dz++)
+                {
+                    set.Add((cx + dx, cz + dz));
+                }
+            }
+
             return set;
         }
 
-        private void HandleSetPlayerPosition(ReadOnlySequence<byte> payload, CancellationToken ct)
+        private void HandleSetPlayerPositionAsync(ReadOnlySequence<byte> payload, CancellationToken ct)
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new SetPlayerPositionPacket();
-            if (!packet.TryRead(ref reader)) return;
+            if (!packet.TryRead(ref reader))
+            {
+                return;
+            }
 
             ctx.X = packet.X;
             ctx.Y = packet.Y;
             ctx.Z = packet.Z;
-            CheckChunkCross(ct);
+            CheckChunkCrossAsync(ct);
         }
 
-        private void HandleSetPlayerPositionAndRotation(ReadOnlySequence<byte> payload, CancellationToken ct)
+        private void HandleSetPlayerPositionAndRotationAsync(ReadOnlySequence<byte> payload, CancellationToken ct)
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new SetPlayerPositionAndRotationPacket();
-            if (!packet.TryRead(ref reader)) return;
+            if (!packet.TryRead(ref reader))
+            {
+                return;
+            }
 
             ctx.X = packet.X;
             ctx.Y = packet.Y;
             ctx.Z = packet.Z;
             ctx.Yaw = packet.Yaw;
             ctx.Pitch = packet.Pitch;
-            CheckChunkCross(ct);
+            CheckChunkCrossAsync(ct);
         }
 
         private void HandleSetPlayerRotation(ReadOnlySequence<byte> payload)
@@ -344,23 +354,22 @@ namespace FunCraft.Network.Handlers
             ctx.Pitch = packet.Pitch;
         }
 
-        private void CheckChunkCross(CancellationToken ct)
+        private void CheckChunkCrossAsync(CancellationToken ct)
         {
             if (!_spawnAcknowledged) return;
             var cx = WorldToChunk(ctx.X);
             var cz = WorldToChunk(ctx.Z);
             if (cx != _lastChunkX || cz != _lastChunkZ)
+            {
                 _ = UpdateChunksAsync(cx, cz, ct);
+            }
         }
 
         private async ValueTask HandlePlayerActionAsync(ReadOnlySequence<byte> payload, CancellationToken ct)
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new PlayerActionPacket();
-            if (!packet.TryRead(ref reader))
-            {
-                return;
-            }
+            if (!packet.TryRead(ref reader)) return;
 
             // Only break on FinishedDigging.
             // Creative mode sends only StartedDigging — TODO when game-mode tracking is added.
@@ -375,7 +384,7 @@ namespace FunCraft.Network.Handlers
                     Location = pos,
                     BlockState = WellKnownBlocks.Air.Id
                 };
-                await registry.BroadcastAsync(update, ct);
+                await registry.BroadcastRawAsync(update, Guid.Empty, ct);
             }
 
             await Sender.SendAsync(new AcknowledgeBlockChangePacket { SequenceId = packet.Sequence }, ct);
@@ -412,7 +421,11 @@ namespace FunCraft.Network.Handlers
             // Wire slots 36–44 = hotbar indices 0–8.
             foreach (var (wireSlot, itemId, count) in packet.ChangedSlots)
             {
-                if (wireSlot < 36 || wireSlot > 44) continue;
+                if (wireSlot is < 36 or > 44)
+                {
+                    continue;
+                }
+
                 var hotbarIndex = wireSlot - 36;
                 ctx.Hotbar[hotbarIndex] = itemId > 0
                     ? new HotbarSlot(itemId, count)
@@ -424,10 +437,12 @@ namespace FunCraft.Network.Handlers
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new SetHeldItemPacket();
+
             if (!packet.TryRead(ref reader))
             {
                 return;
             }
+
             ctx.HeldSlot = Math.Clamp(packet.Slot, (short)0, (short)8);
         }
 
@@ -435,7 +450,11 @@ namespace FunCraft.Network.Handlers
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new UseItemOnPacket();
-            if (!packet.TryRead(ref reader)) return;
+
+            if (!packet.TryRead(ref reader))
+            {
+                return;
+            }
 
             await Sender.SendAsync(new AcknowledgeBlockChangePacket { SequenceId = packet.Sequence }, ct);
 
@@ -445,26 +464,29 @@ namespace FunCraft.Network.Handlers
                 return;
             }
 
-            if (!ItemToBlockState.TryGetValue(held.ItemId, out var blockStateId)) return;
+            if (!ItemToBlockState.TryGetValue(held.ItemId, out var blockStateId))
+            {
+                return;
+            }
 
-            if (packet.Face < 0 || packet.Face >= FaceOffsets.Length) return;
+            if (packet.Face < 0 || packet.Face >= FaceOffsets.Length)
+            {
+                return;
+            }
+
             var (dx, dy, dz) = FaceOffsets[packet.Face];
-            var placePos = new BlockPosition(
-                packet.Location.X + dx,
-                packet.Location.Y + dy,
-                packet.Location.Z + dz);
+            var placePos = new BlockPosition(packet.Location.X + dx, packet.Location.Y + dy, packet.Location.Z + dz);
 
             var playerBlockX = (int)Math.Floor(ctx.X);
             var playerBlockY = (int)Math.Floor(ctx.Y);
             var playerBlockZ = (int)Math.Floor(ctx.Z);
-            if (placePos.X == playerBlockX &&
-                (placePos.Y == playerBlockY || placePos.Y == playerBlockY + 1) &&
-                placePos.Z == playerBlockZ)
-                return;
 
-            var column = world.GetChunk(
-                (int)Math.Floor((double)placePos.X / 16),
-                (int)Math.Floor((double)placePos.Z / 16));
+            if (placePos.X == playerBlockX && (placePos.Y == playerBlockY || placePos.Y == playerBlockY + 1) && placePos.Z == playerBlockZ)
+            {
+                return;
+            }
+
+            var column = world.GetChunk((int)Math.Floor((double)placePos.X / 16), (int)Math.Floor((double)placePos.Z / 16));
             column.SetBlock(placePos.X, placePos.Y, placePos.Z, new BlockState(blockStateId));
 
             await registry.BroadcastRawAsync(new BlockUpdatePacket
@@ -478,15 +500,18 @@ namespace FunCraft.Network.Handlers
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new ChatMessagePacket();
-            if (!packet.TryRead(ref reader)) return;
+
+            if (!packet.TryRead(ref reader))
+            {
+                return;
+            }
 
             var message = packet.Message.Trim();
-            if (string.IsNullOrEmpty(message)) return;
 
-            //if (await _localCommands.TryDispatchAsync(message, respond, Sender, ct))
-            //{
-            //    return;
-            //}
+            if (string.IsNullOrEmpty(message))
+            {
+                return;
+            }
 
             if (await commands.TryDispatchAsync(message, respond: text => Sender.SendAsync(new SystemChatMessagePacket {Content = text}, ct).AsTask(), sender: Sender, ct))
             {
@@ -554,24 +579,21 @@ namespace FunCraft.Network.Handlers
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new ServerboundKeepAlivePacket();
-            if (!packet.TryRead(ref reader))
-            {
-                return;
-            }
+            if (!packet.TryRead(ref reader)) return;
 
             if (packet.KeepAliveId != _lastKeepAliveId)
             {
-                //Console.WriteLine($"[PlayHandler] keep-alive mismatch — sent {_lastKeepAliveId}, got {packet.KeepAliveId}");
+                Console.WriteLine($"[PlayHandler] keep-alive mismatch — sent {_lastKeepAliveId}, got {packet.KeepAliveId}");
             }
         }
 
-        private void HandleChunkBatchReceived(ReadOnlySequence<byte> payload)
+        private static void HandleChunkBatchReceived(ReadOnlySequence<byte> payload)
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new ChunkBatchReceivedPacket();
             if (packet.TryRead(ref reader))
             {
-                //Console.WriteLine($"[PlayHandler] client wants {packet.DesiredChunksPerTick:F2} chunks/tick");
+                Console.WriteLine($"[PlayHandler] client wants {packet.DesiredChunksPerTick:F2} chunks/tick");
             }
         }
 

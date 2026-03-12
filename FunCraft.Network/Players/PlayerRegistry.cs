@@ -1,5 +1,4 @@
-﻿using System.Buffers;
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 
 namespace FunCraft.Network.Players
 {
@@ -22,8 +21,8 @@ namespace FunCraft.Network.Players
         public IReadOnlyList<ConnectedPlayer> GetAll() =>
             [.. _players.Values];
 
-        public Task BroadcastAsync(IPacket packet, CancellationToken ct = default) =>
-            BroadcastAsync(packet, excludeUuid: Guid.Empty, ct);
+        public async Task BroadcastAsync(IPacket packet, CancellationToken ct = default) =>
+            await BroadcastAsync(packet, excludeUuid: Guid.Empty, ct);
 
         public async Task BroadcastAsync(IPacket packet, Guid excludeUuid, CancellationToken ct = default)
         {
@@ -44,43 +43,38 @@ namespace FunCraft.Network.Players
                 }
             }
         }
-        public async Task BroadcastRawAsync(IPacket packet, Guid excludeUuid, CancellationToken ct = default)
+        public Task BroadcastRawAsync(IPacket packet, Guid excludeUuid, CancellationToken ct = default)
         {
             var payloadLength = packet.GetLength();
             var idLength = VarInt.GetSize(packet.PacketId);
             var totalLength = payloadLength + idLength;
             var frameLength = VarInt.GetSize(totalLength) + totalLength;
 
-            var buf = ArrayPool<byte>.Shared.Rent(frameLength);
-            try
+            var buf = new byte[frameLength];
+            var writer = new PacketWriter(buf);
+            writer.WriteVarInt(totalLength);
+            writer.WriteVarInt(packet.PacketId);
+            packet.Write(buf.AsSpan(writer.BytesWritten), out _);
+            var framed = buf.AsMemory();
+
+            foreach (var player in _players.Values)
             {
-                var writer = new PacketWriter(buf);
-                writer.WriteVarInt(totalLength);
-                writer.WriteVarInt(packet.PacketId);
-                packet.Write(buf.AsSpan(writer.BytesWritten), out _);
-                var framed = buf.AsMemory(0, frameLength);
-
-                foreach (var player in _players.Values)
+                if (player.Uuid == excludeUuid)
                 {
-                    if (player.Uuid == excludeUuid)
-                    {
-                        continue;
-                    }
+                    continue;
+                }
 
-                    try
-                    {
-                        await player.Sender.SendRawAsync(framed, ct);
-                    }
-                    catch
-                    {
-                        /* player disconnected mid-broadcast */
-                    }
+                try
+                {
+                    player.Sender.EnqueueRaw(framed);
+                }
+                catch
+                {
+                     /* player disconnected */
                 }
             }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buf);
-            }
+
+            return Task.CompletedTask;
         }
     }
 }

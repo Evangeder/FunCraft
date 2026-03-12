@@ -8,15 +8,12 @@
         /// </summary>
         Task<HotbarSlot[]?> GetHotbarAsync(Guid uuid, CancellationToken ct = default);
 
-<<<<<<< Updated upstream
         /// <summary>Persists hotbar slots 0–8. Empty slots are deleted.</summary>
         Task SaveHotbarAsync(Guid uuid, HotbarSlot[] hotbar, CancellationToken ct = default);
-=======
         /// <summary>
         /// Persists all <see cref="HotbarSlot.InventorySize"/> slots from
         /// <paramref name="inventory"/>. Empty slots are deleted.
         /// </summary>
         ValueTask SaveInventoryAsync(Guid uuid, ReadOnlyMemory<HotbarSlot> inventory, CancellationToken ct = default);
->>>>>>> Stashed changes
     }
 }

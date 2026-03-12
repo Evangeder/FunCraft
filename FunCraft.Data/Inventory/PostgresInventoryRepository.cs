@@ -31,14 +31,12 @@ namespace FunCraft.Data.Inventory
             {
                 hotbar ??= new HotbarSlot[9];
                 var slot = reader.GetInt16(0);
-<<<<<<< Updated upstream
                 var json = reader.GetString(1);
                 var m = ItemDataRegex().Match(json);
                 if (m.Success)
                 {
                     hotbar[slot] = new HotbarSlot(ItemId: int.Parse(m.Groups[1].ValueSpan), Count: int.Parse(m.Groups[2].ValueSpan));
                 }
-=======
                 if ((uint) slot >= HotbarSlot.InventorySize)
                 {
                     continue;
@@ -48,19 +46,16 @@ namespace FunCraft.Data.Inventory
                     ItemId: reader.GetInt32(1),
                     Count: reader.GetInt16(2));
                 found = true;
->>>>>>> Stashed changes
             }
-
 
             return hotbar;
         }
 
-<<<<<<< Updated upstream
         public async Task SaveHotbarAsync(Guid uuid, HotbarSlot[] hotbar, CancellationToken ct = default)
-=======
-        public async ValueTask SaveInventoryAsync(
-            Guid uuid, ReadOnlyMemory<HotbarSlot> inventory, CancellationToken ct = default)
->>>>>>> Stashed changes
+            return found;
+        }
+
+        public async ValueTask SaveInventoryAsync(Guid uuid, ReadOnlyMemory<HotbarSlot> inventory, CancellationToken ct = default)
         {
             await using var conn = await db.OpenConnectionAsync(ct);
             await using var tr = await conn.BeginTransactionAsync(ct);

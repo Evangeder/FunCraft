@@ -12,7 +12,7 @@
         IReadOnlyList<ConnectedPlayer> GetAll();
 
         /// <summary>
-        /// Sends <paramref name="packet"/> to every connected player.
+        /// Sends <paramref name="packet"/> to every connected player
         /// </summary>
         Task BroadcastAsync(IPacket packet, CancellationToken ct = default);
 
@@ -20,5 +20,12 @@
         /// Sends <paramref name="packet"/> to every player except <paramref name="excludeUuid"/>.
         /// </summary>
         Task BroadcastAsync(IPacket packet, Guid excludeUuid, CancellationToken ct = default);
+
+        /// <summary>
+        /// Frames <paramref name="packet"/> once, then sends the raw bytes to every player
+        /// except <paramref name="excludeUuid"/>. Avoids per-recipient ArrayPool rent+serialize.
+        /// Use for high-fan-out broadcasts (TAB updates, chat, block changes).
+        /// </summary>
+        Task BroadcastRawAsync(IPacket packet, Guid excludeUuid, CancellationToken ct = default);
     }
 }

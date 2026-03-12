@@ -48,12 +48,12 @@ namespace FunCraft.Server
                 .ConfigureLogging(logging =>
                 {
                     logging.AddConsole(options =>
-                        options.LogToStandardErrorThreshold = LogLevel.Trace);
+                        options.LogToStandardErrorThreshold = LogLevel.Information);
                 })
                 .Build();
 
             await host.Services
-                .GetRequiredService<global::FunCraft.Data.Migrations.DbMigrator>()
+                .GetRequiredService<Data.Migrations.DbMigrator>()
                 .MigrateAsync();
 
             RegistryLoader.Load();

@@ -2,6 +2,7 @@
 using System.IO.Pipelines;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading.Channels;
 
 namespace FunCraft.Network.Connections
 {
@@ -23,7 +24,16 @@ namespace FunCraft.Network.Connections
 
         private readonly Socket _socket;
         private readonly Pipe _pipe = new();
-        private readonly SemaphoreSlim _sendLock = new(1, 1);
+        // Limits concurrent Postgres persist operations on disconnect.
+        // Postgres default max_connections = 100; keep headroom for reads.
+        private static readonly SemaphoreSlim _persistGate = new(20, 20);
+
+        // Unbounded channel — single reader (DrainAsync), multiple writers.
+        // Each item is a self-contained byte[] frame; the drain loop sends them
+        // sequentially without any lock contention.
+        private readonly Channel<ReadOnlyMemory<byte>> _sendChannel =
+            Channel.CreateUnbounded<ReadOnlyMemory<byte>>(
+                new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
         private readonly PlayerContext _ctx;
         private readonly IPlayerRepository _players;
@@ -62,8 +72,86 @@ namespace FunCraft.Network.Connections
 
         public async Task RunAsync(CancellationToken ct)
         {
-            await Task.WhenAll(FillPipeAsync(ct), ReadPipeAsync(ct));
+            // Per-connection CTS: when Fill or Read finishes (socket dead), cancel Drain
+            // so WaitToReadAsync unblocks and the connection can be disposed.
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var token = cts.Token;
+            try
+            {
+                await Task.WhenAll(
+                    CancelOnComplete(FillPipeAsync(token), cts),
+                    CancelOnComplete(ReadPipeAsync(token), cts),
+                    DrainAsync(token));
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+            catch (Exception) { }
         }
+
+        // Cancels the CTS when the wrapped task finishes (for any reason).
+        private static async Task CancelOnComplete(Task task, CancellationTokenSource cts)
+        {
+            try { await task; }
+            catch { }
+            finally { cts.Cancel(); }
+        }
+
+        // ─── Send drain ──────────────────────────────────────────────────────────
+
+        // Reused across iterations — cleared each time, never grows unboundedly
+        // because we cap at MaxCoalesce frames per send.
+        private const int MaxCoalesce = 64;
+        private readonly List<ArraySegment<byte>> _sendBuffers = new(MaxCoalesce);
+
+        private async Task DrainAsync(CancellationToken ct)
+        {
+            var reader = _sendChannel.Reader;
+            try
+            {
+                while (await reader.WaitToReadAsync(ct))
+                {
+                    // Coalesce all queued frames (up to MaxCoalesce) into one scatter-gather send.
+                    // Socket.SendAsync(IList<ArraySegment<byte>>) maps to a single writev() syscall
+                    // regardless of how many segments are in the list.
+                    _sendBuffers.Clear();
+                    while (_sendBuffers.Count < MaxCoalesce && reader.TryRead(out var framed))
+                    {
+                        if (System.Runtime.InteropServices.MemoryMarshal.TryGetArray(framed, out var seg))
+                            _sendBuffers.Add(seg);
+                    }
+
+                    if (_sendBuffers.Count == 0) continue;
+
+                    try
+                    {
+                        if (_sendBuffers.Count == 1)
+                        {
+                            // Fast path — single frame, no list overhead.
+                            var mem = _sendBuffers[0].AsMemory();
+                            while (mem.Length > 0)
+                            {
+                                var sent = await _socket.SendAsync(mem, ct);
+                                mem = mem[sent..];
+                            }
+                        }
+                        else
+                        {
+                            // Scatter-gather — all frames in one syscall.
+                            await _socket.SendAsync(_sendBuffers, SocketFlags.None);
+                        }
+                    }
+                    catch
+                    {
+                        break;
+                    } // socket dead — exit drain
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // connection closed
+            }
+        }
+
+        // ─── Pipe ────────────────────────────────────────────────────────────────
 
         private async Task FillPipeAsync(CancellationToken ct)
         {
@@ -178,23 +266,24 @@ namespace FunCraft.Network.Connections
             }
         }
 
+        // ─── Disconnect cleanup ──────────────────────────────────────────────────
+
         public async ValueTask DisposeAsync()
         {
             if (_ctx.Uuid != Guid.Empty)
             {
+                // Remove from registry and tell all other players.
                 _registry.Unregister(_ctx.Uuid);
                 try
                 {
-                    await _registry.BroadcastAsync(new PlayerInfoRemovePacket
+                    await _registry.BroadcastRawAsync(new PlayerInfoRemovePacket
                     {
                         Uuids = [_ctx.Uuid]
-                    });
+                    }, _ctx.Uuid);
                 }
-                catch
-                {
-                     /* server may be shutting down */
-                }
+                catch { /* server may be shutting down */ }
 
+                await _persistGate.WaitAsync();
                 try
                 {
                     await _players.SaveAsync(new PlayerRecord
@@ -212,33 +301,40 @@ namespace FunCraft.Network.Connections
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[ClientConnection] persist failed: {ex.Message}");
+                    Console.WriteLine($"[ClientConnection] persist failed: {ex}");
+                }
+                finally
+                {
+                    _persistGate.Release();
                 }
             }
 
             _socket.Shutdown(SocketShutdown.Both);
             _socket.Dispose();
-            _sendLock.Dispose();
+            _sendChannel.Writer.TryComplete();
             await _pipe.Reader.CompleteAsync();
             await _pipe.Writer.CompleteAsync();
         }
 
-        public async ValueTask SendAsync(IPacket packet, CancellationToken ct)
+        // ─── IPacketSender ───────────────────────────────────────────────────────
+
+        public ValueTask SendAsync(IPacket packet, CancellationToken ct)
         {
             var payloadLength = packet.GetLength();
             var packetIdLength = VarInt.GetSize(packet.PacketId);
             var totalLength = payloadLength + packetIdLength;
             var frameLength = VarInt.GetSize(totalLength) + totalLength;
 
-            var buffer = ArrayPool<byte>.Shared.Rent(frameLength);
-            try
-            {
-                var writer = new PacketWriter(buffer);
-                writer.WriteVarInt(totalLength);
-                writer.WriteVarInt(packet.PacketId);
-                packet.Write(buffer.AsSpan(writer.BytesWritten), out var payloadWritten);
+            // Allocate exact-size array — owned by the channel item until drain sends it.
+            var buf = new byte[frameLength];
+            var writer = new PacketWriter(buf);
+            writer.WriteVarInt(totalLength);
+            writer.WriteVarInt(packet.PacketId);
+            packet.Write(buf.AsSpan(writer.BytesWritten), out _);
 
-                var memory = buffer.AsMemory(0, writer.BytesWritten + payloadWritten);
+            _sendChannel.Writer.TryWrite(buf.AsMemory());
+            return ValueTask.CompletedTask;
+        }
 
                 await _sendLock.WaitAsync(ct);
                 try

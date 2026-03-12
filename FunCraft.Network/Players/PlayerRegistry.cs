@@ -2,7 +2,9 @@
 
 namespace FunCraft.Network.Players
 {
+    using Protocol.IO;
     using Protocol.Packets;
+    using Protocol.Types;
 
     public sealed class PlayerRegistry : IPlayerRegistry
     {
@@ -19,8 +21,8 @@ namespace FunCraft.Network.Players
         public IReadOnlyList<ConnectedPlayer> GetAll() =>
             [.. _players.Values];
 
-        public Task BroadcastAsync(IPacket packet, CancellationToken ct = default) =>
-            BroadcastAsync(packet, excludeUuid: Guid.Empty, ct);
+        public async Task BroadcastAsync(IPacket packet, CancellationToken ct = default) =>
+            await BroadcastAsync(packet, excludeUuid: Guid.Empty, ct);
 
         public async Task BroadcastAsync(IPacket packet, Guid excludeUuid, CancellationToken ct = default)
         {
@@ -40,6 +42,39 @@ namespace FunCraft.Network.Players
                      /* player disconnected mid-broadcast — skip */
                 }
             }
+        }
+        public Task BroadcastRawAsync(IPacket packet, Guid excludeUuid, CancellationToken ct = default)
+        {
+            var payloadLength = packet.GetLength();
+            var idLength = VarInt.GetSize(packet.PacketId);
+            var totalLength = payloadLength + idLength;
+            var frameLength = VarInt.GetSize(totalLength) + totalLength;
+
+            var buf = new byte[frameLength];
+            var writer = new PacketWriter(buf);
+            writer.WriteVarInt(totalLength);
+            writer.WriteVarInt(packet.PacketId);
+            packet.Write(buf.AsSpan(writer.BytesWritten), out _);
+            var framed = buf.AsMemory();
+
+            foreach (var player in _players.Values)
+            {
+                if (player.Uuid == excludeUuid)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    player.Sender.EnqueueRaw(framed);
+                }
+                catch
+                {
+                     /* player disconnected */
+                }
+            }
+
+            return Task.CompletedTask;
         }
     }
 }

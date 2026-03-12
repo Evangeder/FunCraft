@@ -1,6 +1,4 @@
-﻿using System.Linq;
-using FunCraft.World;
-using Microsoft.Extensions.Configuration;
+﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Net;
@@ -8,11 +6,12 @@ using System.Net.Sockets;
 
 namespace FunCraft.Network.Server
 {
+    using FunCraft.World;
     using Commands;
     using Connections;
     using Data.Players;
     using Data.Sessions;
-    using FunCraft.Data.Inventory;
+    using Data.Inventory;
     using Players;
 
     public class MinecraftServer(IConfiguration config, ILogger<MinecraftServer> logger, IWorldSource world, IPlayerRepository players,

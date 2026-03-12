@@ -6,11 +6,11 @@ using System.Threading.Channels;
 
 namespace FunCraft.Network.Connections
 {
+    using FunCraft.World;
     using Commands;
     using Data.Players;
     using Data.Sessions;
-    using FunCraft.Data.Inventory;
-    using global::FunCraft.World;
+    using Data.Inventory;
     using Handlers;
     using Players;
     using Protocol.IO;
@@ -49,17 +49,8 @@ namespace FunCraft.Network.Connections
 
         private ConnectionState _connectionState = ConnectionState.Handshaking;
 
-        public ClientConnection(
-            Socket socket,
-            IWorldSource world,
-            IPlayerRepository players,
-            IInventoryRepository inventory,
-            ISessionStore sessions,
-            IPlayerRegistry registry,
-            CommandDispatcher commands,
-            string serverName,
-            string motd,
-            int maxPlayers)
+        public ClientConnection(Socket socket, IWorldSource world, IPlayerRepository players, IInventoryRepository inventory,
+            ISessionStore sessions, IPlayerRegistry registry, CommandDispatcher commands, string serverName, string motd, int maxPlayers)
         {
             _socket = socket;
             _players = players;
@@ -168,11 +159,19 @@ namespace FunCraft.Network.Connections
             {
                 var buffer = _pipe.Writer.GetMemory(4096);
                 var bytesRead = await _socket.ReceiveAsync(buffer, ct);
-                if (bytesRead == 0) break;
+
+                if (bytesRead == 0)
+                {
+                    break;
+                }
 
                 _pipe.Writer.Advance(bytesRead);
                 var result = await _pipe.Writer.FlushAsync(ct);
-                if (result.IsCompleted) break;
+
+                if (result.IsCompleted)
+                {
+                    break;
+                }
             }
             await _pipe.Writer.CompleteAsync();
         }
@@ -193,13 +192,15 @@ namespace FunCraft.Network.Connections
                 }
 
                 _pipe.Reader.AdvanceTo(consumed, examined);
-                if (result.IsCompleted) break;
+                if (result.IsCompleted)
+                {
+                    break;
+                }
             }
             await _pipe.Reader.CompleteAsync();
         }
 
-        private static bool TryReadPacket(ref ReadOnlySequence<byte> buffer,
-            out int packetId, out ReadOnlySequence<byte> payload)
+        private static bool TryReadPacket(ref ReadOnlySequence<byte> buffer, out int packetId, out ReadOnlySequence<byte> payload)
         {
             if (buffer.Length > 0 && buffer.FirstSpan[0] == LegacyPingPacket)
             {
@@ -211,16 +212,23 @@ namespace FunCraft.Network.Connections
             packetId = 0; payload = default;
 
             var reader = new SequenceReader<byte>(buffer);
-            if (!VarInt.TryRead(ref reader, out var length)) return false;
+            if (!VarInt.TryRead(ref reader, out var length))
+            {
+                return false;
+            }
             if (reader.Remaining < length) return false;
 
             var beforeId = reader.Consumed;
-            if (!VarInt.TryRead(ref reader, out packetId)) return false;
+            if (!VarInt.TryRead(ref reader, out packetId))
+            {
+                return false;
+            }
 
             var idLength = reader.Consumed - beforeId;
             var payloadLength = length - idLength;
             payload = buffer.Slice(reader.Position, payloadLength);
             buffer = buffer.Slice(reader.Position).Slice(payloadLength);
+
             return true;
         }
 
@@ -240,7 +248,9 @@ namespace FunCraft.Network.Connections
             };
 
             if (_connectionState != previous)
+            {
                 await OnStateEnteredAsync(_connectionState, ct);
+            }
         }
 
         private async ValueTask OnStateEnteredAsync(ConnectionState state, CancellationToken ct)
@@ -276,7 +286,7 @@ namespace FunCraft.Network.Connections
                 await _persistGate.WaitAsync();
                 try
                 {
-                    await _players.SaveAsync(new global::FunCraft.Data.Players.PlayerRecord
+                    await _players.SaveAsync(new PlayerRecord
                     {
                         Uuid = _ctx.Uuid,
                         Username = _ctx.Username,
@@ -326,18 +336,41 @@ namespace FunCraft.Network.Connections
             return ValueTask.CompletedTask;
         }
 
-        public ValueTask SendRawAsync(ReadOnlyMemory<byte> framed, CancellationToken ct)
-        {
-            // Copy so the caller can return their pooled buffer immediately.
-            var copy = framed.ToArray();
-            _sendChannel.Writer.TryWrite(copy.AsMemory());
-            return ValueTask.CompletedTask;
+                await _sendLock.WaitAsync(ct);
+                try
+                {
+                    while (memory.Length > 0)
+                    {
+                        var sent = await _socket.SendAsync(memory, ct);
+                        memory = memory[sent..];
+                    }
+                }
+                finally
+                {
+                    _sendLock.Release();
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
         }
 
-        public void EnqueueRaw(ReadOnlyMemory<byte> framed)
+        public async ValueTask SendRawAsync(ReadOnlyMemory<byte> framed, CancellationToken ct)
         {
-            // framed is already a shared heap byte[] — no copy needed.
-            _sendChannel.Writer.TryWrite(framed);
+            await _sendLock.WaitAsync(ct);
+            try
+            {
+                while (framed.Length > 0)
+                {
+                    var sent = await _socket.SendAsync(framed, ct);
+                    framed = framed[sent..];
+                }
+            }
+            finally
+            {
+                _sendLock.Release();
+            }
         }
     }
 }

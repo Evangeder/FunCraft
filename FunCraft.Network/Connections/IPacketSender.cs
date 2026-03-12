@@ -6,6 +6,5 @@
     {
         ValueTask SendAsync(IPacket packet, CancellationToken ct);
         ValueTask SendRawAsync(ReadOnlyMemory<byte> framed, CancellationToken ct);
-        void EnqueueRaw(ReadOnlyMemory<byte> framed);
     }
 }

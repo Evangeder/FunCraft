@@ -6,33 +6,52 @@
     using World.Chunks;
 
     /// <summary>
-    /// Classic superflat layout:
-    /// <list type="bullet">
-    /// <item>Y -64 — bedrock</item>
-    /// <item>Y -63..-62 — stone (2 layers)</item>
-    /// <item>Y -61..-58 — dirt (4 layers, matching vanilla superflat default)</item>
-    /// <item>Y -57 — grass_block</item>
-    /// </list>
-    /// All generated columns are cached so each (x,z) is only built once.
+    /// Classic superflat world generator with a bounded LRU-evicting column cache.
+    /// Evicted columns are disposed so their pooled arrays are returned immediately.
     /// </summary>
-    public sealed class FlatWorldGenerator : IWorldSource
+    public sealed class FlatWorldGenerator : IWorldSource, IDisposable
     {
-        // Absolute Y coords for each layer.
         private const int BedrockY = -64;
         private const int StoneY1 = -63;
         private const int StoneY2 = -11;
         private const int DirtY1 = -10;
-        private const int DirtY2 = -1; // inclusive — 4 layers: -61, -60, -59, -58
+        private const int DirtY2 = -1;
         private const int GrassY = 0;
+
+        private const int MaxCachedColumns = 2048;
 
         private readonly ConcurrentDictionary<(int, int), ChunkColumn> _cache = new();
 
+        private readonly ConcurrentQueue<(int, int)> _evictionQueue = new();
+
         public ChunkColumn GetChunk(int chunkX, int chunkZ)
-            => _cache.GetOrAdd((chunkX, chunkZ), static key =>
+        {
+            if (_cache.TryGetValue((chunkX, chunkZ), out var existing))
+                return existing;
+
+            var column = Generate(chunkX, chunkZ);
+            if (_cache.TryAdd((chunkX, chunkZ), column))
             {
-                var (cx, cz) = key;
-                return Generate(cx, cz);
-            });
+                _evictionQueue.Enqueue((chunkX, chunkZ));
+                TrimCache();
+            }
+            else
+            {
+                column.Dispose();
+                column = _cache[(chunkX, chunkZ)];
+            }
+            return column;
+        }
+
+        private void TrimCache()
+        {
+            while (_cache.Count > MaxCachedColumns &&
+                   _evictionQueue.TryDequeue(out var key))
+            {
+                if (_cache.TryRemove(key, out var evicted))
+                    evicted.Dispose();
+            }
+        }
 
         private static ChunkColumn Generate(int chunkX, int chunkZ)
         {
@@ -53,6 +72,16 @@
                 }
 
             return column;
+        }
+
+        public void Dispose()
+        {
+            foreach (var col in _cache.Values)
+            {
+                col.Dispose();
+            }
+
+            _cache.Clear();
         }
     }
 }

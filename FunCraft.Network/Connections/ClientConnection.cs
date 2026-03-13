@@ -1,6 +1,7 @@
 ﻿using System.Buffers;
 using System.IO.Pipelines;
 using System.Net;
+using System.Text;
 using System.Net.Sockets;
 using System.Threading.Channels;
 
@@ -24,6 +25,7 @@ namespace FunCraft.Network.Connections
 
         private readonly Socket _socket;
         private readonly Pipe _pipe = new();
+
         // Limits concurrent Postgres persist operations on disconnect.
         // Postgres default max_connections = 100; keep headroom for reads.
         private static readonly SemaphoreSlim _persistGate = new(20, 20);
@@ -49,17 +51,8 @@ namespace FunCraft.Network.Connections
 
         private ConnectionState _connectionState = ConnectionState.Handshaking;
 
-        public ClientConnection(
-            Socket socket,
-            IWorldSource world,
-            IPlayerRepository players,
-            IInventoryRepository inventory,
-            ISessionStore sessions,
-            IPlayerRegistry registry,
-            CommandDispatcher commands,
-            string serverName,
-            string motd,
-            int maxPlayers)
+        public ClientConnection(Socket socket, IWorldSource world, IPlayerRepository players, IInventoryRepository inventory,
+            ISessionStore sessions, IPlayerRegistry registry, CommandDispatcher commands, string serverName, string motd, int maxPlayers)
         {
             _socket = socket;
             _players = players;
@@ -69,7 +62,7 @@ namespace FunCraft.Network.Connections
 
             _ctx = new PlayerContext
             {
-                IpAddress = (socket.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "unknown"
+                IpAddress = (socket.RemoteEndPoint as IPEndPoint)?.Address
             };
 
             _handshakeHandler = new HandshakeHandler { Sender = this };
@@ -99,9 +92,15 @@ namespace FunCraft.Network.Connections
         // Cancels the CTS when the wrapped task finishes (for any reason).
         private static async Task CancelOnComplete(Task task, CancellationTokenSource cts)
         {
-            try { await task; }
+            try
+            {
+                await task;
+            }
             catch { }
-            finally { cts.Cancel(); }
+            finally
+            {
+                cts.Cancel();
+            }
         }
 
         // ─── Send drain ──────────────────────────────────────────────────────────
@@ -256,13 +255,10 @@ namespace FunCraft.Network.Connections
             }
         }
 
-        // ─── Disconnect cleanup ──────────────────────────────────────────────────
-
         public async ValueTask DisposeAsync()
         {
             if (_ctx.Uuid != Guid.Empty)
             {
-                // Remove from registry and tell all other players.
                 _registry.Unregister(_ctx.Uuid);
                 try
                 {
@@ -271,7 +267,10 @@ namespace FunCraft.Network.Connections
                         Uuids = [_ctx.Uuid]
                     }, _ctx.Uuid);
                 }
-                catch { /* server may be shutting down */ }
+                catch
+                {
+                     /* server may be shutting down */
+                }
 
                 await _persistGate.WaitAsync();
                 try
@@ -279,7 +278,7 @@ namespace FunCraft.Network.Connections
                     await _players.SaveAsync(new global::FunCraft.Data.Players.PlayerRecord
                     {
                         Uuid = _ctx.Uuid,
-                        Username = _ctx.Username,
+                        Username = Encoding.UTF8.GetString(_ctx.Username.Span),
                         X = _ctx.X,
                         Y = _ctx.Y,
                         Z = _ctx.Z,
@@ -291,7 +290,7 @@ namespace FunCraft.Network.Connections
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[ClientConnection] persist failed: {ex}");
+                    //Console.WriteLine($"[ClientConnection] persist failed: {ex}");
                 }
                 finally
                 {
@@ -306,8 +305,6 @@ namespace FunCraft.Network.Connections
             await _pipe.Writer.CompleteAsync();
         }
 
-        // ─── IPacketSender ───────────────────────────────────────────────────────
-
         public ValueTask SendAsync(IPacket packet, CancellationToken ct)
         {
             var payloadLength = packet.GetLength();
@@ -315,7 +312,6 @@ namespace FunCraft.Network.Connections
             var totalLength = payloadLength + packetIdLength;
             var frameLength = VarInt.GetSize(totalLength) + totalLength;
 
-            // Allocate exact-size array — owned by the channel item until drain sends it.
             var buf = new byte[frameLength];
             var writer = new PacketWriter(buf);
             writer.WriteVarInt(totalLength);
@@ -328,7 +324,6 @@ namespace FunCraft.Network.Connections
 
         public ValueTask SendRawAsync(ReadOnlyMemory<byte> framed, CancellationToken ct)
         {
-            // Copy so the caller can return their pooled buffer immediately.
             var copy = framed.ToArray();
             _sendChannel.Writer.TryWrite(copy.AsMemory());
             return ValueTask.CompletedTask;
@@ -336,7 +331,6 @@ namespace FunCraft.Network.Connections
 
         public void EnqueueRaw(ReadOnlyMemory<byte> framed)
         {
-            // framed is already a shared heap byte[] — no copy needed.
             _sendChannel.Writer.TryWrite(framed);
         }
     }

@@ -1,5 +1,4 @@
 ﻿using System.Buffers;
-using System.Text;
 using Microsoft.Extensions.Logging;
 
 namespace FunCraft.Network.Handlers
@@ -42,14 +41,11 @@ namespace FunCraft.Network.Handlers
 
         private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(10);
 
+        // Static outgoing chat payloads — encoded once, reused on every login.
         private static readonly byte[] MsgWelcome =
             "Hello, welcome to the FunC#raft server!"u8.ToArray();
         private static readonly byte[] MsgInDev =
             "This server is heavily in development."u8.ToArray();
-        private static readonly byte[] JoinPrefix =
-            "Player '§e"u8.ToArray();
-        private static readonly byte[] JoinSuffix =
-            "§f' joined the game."u8.ToArray();
 
         private readonly CommandDispatcher _localCommands = new();
 
@@ -129,6 +125,8 @@ namespace FunCraft.Network.Handlers
 
             _localCommands.Register(new TestCommand(ctx));
             _localCommands.Register(new RespawnCommand(ctx));
+            _localCommands.Register(new GiveCommand(ctx));
+            _localCommands.Register(new HelpCommand(_localCommands, commands));
 
             // Rent a buffer, fill from DB, copy into ctx, return immediately.
             var rentedInv = ArrayPool<InventorySlot>.Shared.Rent(InventorySlot.InventorySize);
@@ -137,9 +135,7 @@ namespace FunCraft.Network.Handlers
                 rentedInv.AsSpan(0, InventorySlot.InventorySize).Clear();
                 var hadSaved = await inventory.TryGetInventoryAsync(ctx.Uuid, rentedInv.AsMemory(0, InventorySlot.InventorySize), ct);
                 if (hadSaved)
-                {
                     rentedInv.AsSpan(0, InventorySlot.InventorySize).CopyTo(ctx.Inventory);
-                }
             }
             finally
             {
@@ -160,7 +156,10 @@ namespace FunCraft.Network.Handlers
 
             _ = KeepAliveLoopAsync(ct);
 
-            await registry.BroadcastAsync(new SystemChatMessagePacket { Content = Encoding.UTF8.GetBytes($"Player '§e{ctx.Username}§f' joined the game.") }, ct);
+            await registry.BroadcastAsync(new SystemChatMessagePacket
+            {
+                Content = ConcatBytes("Player '\u00a7e"u8, ctx.Username.Span, "\u00a7f' joined the game."u8)
+            }, ct);
             await Sender.SendAsync(new SystemChatMessagePacket { Content = MsgWelcome }, ct);
             await Sender.SendAsync(new SystemChatMessagePacket { Content = MsgInDev }, ct);
         }
@@ -830,11 +829,20 @@ namespace FunCraft.Network.Handlers
 
             if (await commands.TryDispatchAsync(message, respond, Sender, ct)) return;
 
-            // Broadcast as "<username> message" — decode once, re-encode into one alloc.
-            var msgStr = Encoding.UTF8.GetString(message.Span);
-            var chatLine = Encoding.UTF8.GetBytes($"§7<§f{ctx.Username}§7> {msgStr}");
+            // Message starts with '/' but no dispatcher claimed it.
+            if (message.Span[0] == (byte)'/')
+            {
+                await respond(ConcatBytes("§cUnknown command: "u8, message.Span, MsgUnknownCommandSuffix));
+                return;
+            }
+
+            // Broadcast "<username> message" — pure span concat, no intermediate string.
+            var chatLine = ConcatBytes("\u00a77<\u00a7f"u8, ctx.Username.Span, "\u00a77> "u8, message.Span);
             await registry.BroadcastRawAsync(new SystemChatMessagePacket { Content = chatLine }, Guid.Empty, ct);
         }
+
+        private static readonly byte[] MsgUnknownCommandSuffix =
+            "§f. Try /help."u8.ToArray();
 
         private async ValueTask HandleChatCommandAsync(ReadOnlySequence<byte> payload, CancellationToken ct)
         {
@@ -842,8 +850,6 @@ namespace FunCraft.Network.Handlers
             var packet = new ChatCommandPacket();
             if (!packet.TryRead(ref reader)) return;
 
-            // The packet omits the leading '/'; prepend it so the dispatcher can
-            // use a uniform "starts with '/'" check on every code path.
             var cmd = packet.Command;
             var withSlash = new byte[1 + cmd.Length];
             withSlash[0] = (byte)'/';
@@ -853,10 +859,10 @@ namespace FunCraft.Network.Handlers
             Func<ReadOnlyMemory<byte>, Task> respond =
                 text => Sender.SendAsync(new SystemChatMessagePacket { Content = text }, ct).AsTask();
 
-            if (!await _localCommands.TryDispatchAsync(withSlashMem, respond, Sender, ct))
-            {
-                await commands.TryDispatchAsync(withSlashMem, respond, Sender, ct);
-            }
+            if (await _localCommands.TryDispatchAsync(withSlashMem, respond, Sender, ct)) return;
+            if (await commands.TryDispatchAsync(withSlashMem, respond, Sender, ct)) return;
+
+            await respond(ConcatBytes("§cUnknown command: "u8, withSlash, MsgUnknownCommandSuffix));
         }
 
         private static PlayerInfoUpdatePacket BuildInfoUpdate(IReadOnlyList<ConnectedPlayer> players)
@@ -915,10 +921,33 @@ namespace FunCraft.Network.Handlers
             var packet = new ChunkBatchReceivedPacket();
             if (packet.TryRead(ref reader))
             {
-                //Console.WriteLine($"[PlayHandler] client wants {packet.DesiredChunksPerTick:F2} chunks/tick");
+                Console.WriteLine($"[PlayHandler] client wants {packet.DesiredChunksPerTick:F2} chunks/tick");
             }
         }
 
         private static int WorldToChunk(double worldCoord) => (int)Math.Floor(worldCoord) >> 4;
+
+        /// <summary>Allocate one <c>byte[]</c> that is the concatenation of three spans.</summary>
+        private static byte[] ConcatBytes(ReadOnlySpan<byte> a, ReadOnlySpan<byte> b, ReadOnlySpan<byte> c)
+        {
+            var result = new byte[a.Length + b.Length + c.Length];
+            a.CopyTo(result);
+            b.CopyTo(result.AsSpan(a.Length));
+            c.CopyTo(result.AsSpan(a.Length + b.Length));
+            return result;
+        }
+
+        /// <summary>Allocate one <c>byte[]</c> that is the concatenation of four spans.</summary>
+        private static byte[] ConcatBytes(
+            ReadOnlySpan<byte> a, ReadOnlySpan<byte> b,
+            ReadOnlySpan<byte> c, ReadOnlySpan<byte> d)
+        {
+            var result = new byte[a.Length + b.Length + c.Length + d.Length];
+            a.CopyTo(result);
+            b.CopyTo(result.AsSpan(a.Length));
+            c.CopyTo(result.AsSpan(a.Length + b.Length));
+            d.CopyTo(result.AsSpan(a.Length + b.Length + c.Length));
+            return result;
+        }
     }
 }

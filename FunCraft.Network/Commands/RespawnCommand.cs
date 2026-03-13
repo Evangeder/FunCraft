@@ -4,7 +4,6 @@
     using Players;
     using Protocol.Packets.Play.Outgoing;
 
-    /// <summary>/respawn — teleports the player back to spawn (0, 128, 0).</summary>
     public sealed class RespawnCommand(PlayerContext ctx) : ICommand
     {
         public ReadOnlySpan<byte> Name => "respawn"u8;
@@ -12,11 +11,8 @@
 
         private static readonly byte[] MsgRespawned = "§aRespawned."u8.ToArray();
 
-        public async Task ExecuteAsync(
-            ReadOnlyMemory<byte> args,
-            Func<ReadOnlyMemory<byte>, Task> respond,
-            IPacketSender sender,
-            CancellationToken ct)
+        public async Task ExecuteAsync(ReadOnlyMemory<byte> args, Func<ReadOnlyMemory<byte>, Task> respond,
+            IPacketSender sender, CancellationToken ct)
         {
             ctx.X = 0;
             ctx.Y = 128;

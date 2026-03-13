@@ -2,12 +2,14 @@
 {
     using Connections;
 
-    public sealed class HelpCommand(CommandDispatcher dispatcher) : ICommand
+    public sealed class HelpCommand(params CommandDispatcher[] dispatchers) : ICommand
     {
         public ReadOnlySpan<byte> Name => "help"u8;
         public ReadOnlySpan<byte> Description => "Lists all available commands."u8;
 
         private static readonly byte[] Header = "§6--- Available Commands ---"u8.ToArray();
+        private static readonly byte[] Prefix = "§e/"u8.ToArray();
+        private static readonly byte[] Separator = " §7\u2014 "u8.ToArray();
 
         public async Task ExecuteAsync(
             ReadOnlyMemory<byte> args,
@@ -16,34 +18,21 @@
             CancellationToken ct)
         {
             await respond(Header);
+            foreach (var dispatcher in dispatchers)
             foreach (var cmd in dispatcher.All)
                 await respond(BuildHelpLine(cmd));
         }
 
-        /// <summary>
-        /// Builds "§e/&lt;name&gt; §7— &lt;description&gt;" into a freshly allocated
-        /// <c>byte[]</c>.  Returning <see cref="ReadOnlyMemory{T}"/> (not a span)
-        /// keeps ownership clear and eliminates any risk of use-after-free.
-        /// </summary>
         private static ReadOnlyMemory<byte> BuildHelpLine(ICommand cmd)
         {
-            const int prefixLen = 5;
-            const int sepLen = 9;
-
-            var totalLen = prefixLen + cmd.Name.Length + sepLen + cmd.Description.Length;
+            var totalLen = Prefix.Length + cmd.Name.Length + Separator.Length + cmd.Description.Length;
             var buffer = new byte[totalLen];
-            var span = buffer.AsSpan();
+            var pos = 0;
 
-            "§e/"u8.CopyTo(span);
-            var pos = prefixLen;
-
-            cmd.Name.CopyTo(span[pos..]);
-            pos += cmd.Name.Length;
-
-            " §7— "u8.CopyTo(span[pos..]);
-            pos += sepLen;
-
-            cmd.Description.CopyTo(span[pos..]);
+            Prefix.CopyTo(buffer.AsSpan(pos)); pos += Prefix.Length;
+            cmd.Name.CopyTo(buffer.AsSpan(pos)); pos += cmd.Name.Length;
+            Separator.CopyTo(buffer.AsSpan(pos)); pos += Separator.Length;
+            cmd.Description.CopyTo(buffer.AsSpan(pos));
 
             return buffer;
         }

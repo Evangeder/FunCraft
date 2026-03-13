@@ -1,4 +1,5 @@
 ﻿using System.Buffers;
+using System.Text;
 
 namespace FunCraft.Network.Handlers
 {
@@ -20,7 +21,7 @@ namespace FunCraft.Network.Handlers
                     var login = new LoginStartPacket();
                     login.TryRead(ref reader);
 
-                    // Populate the shared context so PlayHandler can use it.
+                    // Populate the shared context — both fields stay as bytes.
                     ctx.Username = login.PlayerName;
                     ctx.Uuid = login.PlayerGuid;
 
@@ -31,17 +32,17 @@ namespace FunCraft.Network.Handlers
                         PropertyCount = 0
                     }, ct);
 
-                    // Write the live session to Redis.
+                    // Redis expects a string — decode exactly once at this persistence boundary.
                     await sessions.SetAsync(new PlayerSession
                     {
                         Uuid = ctx.Uuid,
-                        Username = ctx.Username,
-                        IpAddress = ctx.IpAddress,
+                        Username = Encoding.UTF8.GetString(ctx.Username.Span),
+                        IpAddress = ctx.IpAddress?.ToString() ?? "unknown",
                         ConnectedAt = DateTimeOffset.UtcNow,
                     }, ct);
 
                     return ConnectionState.Login;
-                    
+
                 case LoginAcknowledgePacket.Id:
                     return ConnectionState.Configuration;
 

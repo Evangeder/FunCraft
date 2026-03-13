@@ -10,15 +10,17 @@
 
         public int GetLength() =>
             16 +
-            McString.GetSize(PlayerName) +
+            McString.GetSize(PlayerName.Span) +
             VarInt.GetSize(PropertyCount);
 
         public Guid PlayerGuid { private get; init; }
-        public string PlayerName { private get; init; } = string.Empty;
+
+        /// <summary>Pre-encoded UTF-8 bytes of the player name.</summary>
+        public ReadOnlyMemory<byte> PlayerName { private get; init; } = ReadOnlyMemory<byte>.Empty;
 
         /// <summary>
         /// Number of player properties (skin, cape etc.) from Mojang auth.
-        /// <br/>0 for offline mode, populated from session server in online mode.
+        /// 0 for offline mode.
         /// </summary>
         public int PropertyCount { private get; init; }
 
@@ -26,7 +28,7 @@
         {
             var writer = new PacketWriter(destination);
             writer.WriteGuid(PlayerGuid);
-            writer.WriteString(PlayerName);
+            writer.WriteString(PlayerName.Span);
             writer.WriteVarInt(PropertyCount);
             bytesWritten = writer.BytesWritten;
         }

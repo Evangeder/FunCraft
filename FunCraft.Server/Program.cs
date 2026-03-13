@@ -34,14 +34,7 @@ namespace FunCraft.Server
 
                     services.AddSingleton<IWorldSource, FlatWorldGenerator>();
                     services.AddSingleton<IPlayerRegistry, PlayerRegistry>();
-
-                    // Build the command dispatcher with all commands registered.
-                    services.AddSingleton(sp =>
-                    {
-                        var dispatcher = new CommandDispatcher();
-                        dispatcher.Register(new HelpCommand(dispatcher));
-                        return dispatcher;
-                    });
+                    services.AddSingleton(sp => new CommandDispatcher());
 
                     services.AddHostedService<MinecraftServer>();
                 })

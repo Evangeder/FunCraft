@@ -7,11 +7,13 @@ namespace FunCraft.Network.Commands
     using Players;
     using Protocol.Packets.Play.Outgoing;
 
-    /// <summary>/test — puts 64× oak_log in hotbar slot 0 and tracks it server-side.</summary>
+    /// <summary>
+    /// /test — puts 64× oak_log in hotbar slot 0 and tracks it server-side.
+    /// </summary>
     public sealed class TestCommand(PlayerContext ctx) : ICommand
     {
         public ReadOnlySpan<byte> Name => "test"u8;
-        public ReadOnlySpan<byte> Description => "Gives you 64x minecraft:oak_log (hotbar slot 1)."u8;
+        public ReadOnlySpan<byte> Description => "Gives you 64x minecraft:oak_log."u8;
 
         private const int HotbarSlot0 = 36;
         private const int StackSize = 64;

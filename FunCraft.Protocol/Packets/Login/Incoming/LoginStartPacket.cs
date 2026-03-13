@@ -8,7 +8,7 @@ namespace FunCraft.Protocol.Packets.Login.Incoming
     {
         public const int Id = 0x00;
 
-        public string PlayerName { get; private set; } = string.Empty;
+        public ReadOnlyMemory<byte> PlayerName { get; private set; } = ReadOnlyMemory<byte>.Empty;
         public Guid PlayerGuid { get; private set; }
 
         public bool TryRead(ref SequenceReader<byte> reader)
@@ -16,7 +16,7 @@ namespace FunCraft.Protocol.Packets.Login.Incoming
             try
             {
                 var packetReader = new PacketReader(ref reader);
-                PlayerName = packetReader.ReadString();
+                PlayerName = packetReader.ReadStringRaw();
                 PlayerGuid = packetReader.ReadGuid();
                 return true;
             }

@@ -19,6 +19,7 @@ namespace FunCraft.Protocol.IO
             {
                 throw new InvalidDataException(nameof(VarInt));
             }
+
             return value;
         }
 
@@ -28,6 +29,7 @@ namespace FunCraft.Protocol.IO
             {
                 throw new InvalidDataException(nameof(Int64));
             }
+
             return value;
         }
 
@@ -37,6 +39,7 @@ namespace FunCraft.Protocol.IO
             {
                 throw new InvalidDataException(nameof(VarLong));
             }
+
             return value;
         }
 
@@ -46,15 +49,34 @@ namespace FunCraft.Protocol.IO
             {
                 throw new InvalidDataException(nameof(UInt16));
             }
+
             return (ushort)value;
         }
 
+        /// <summary>
+        /// Read a length-prefixed MC string, decode to <see cref="string"/>.
+        /// </summary>
         public string ReadString()
         {
             if (!McString.TryRead(ref _reader, out var value))
             {
                 throw new InvalidDataException(nameof(String));
             }
+
+            return value;
+        }
+
+        /// <summary>
+        /// Read a length-prefixed MC string without decoding — returns the raw UTF-8
+        /// bytes backed by a freshly allocated <c>byte[]</c>.
+        /// </summary>
+        public ReadOnlyMemory<byte> ReadStringRaw()
+        {
+            if (!McString.TryReadRaw(ref _reader, out var value))
+            {
+                throw new InvalidDataException(nameof(String));
+            }
+
             return value;
         }
 
@@ -64,20 +86,21 @@ namespace FunCraft.Protocol.IO
             {
                 throw new InvalidDataException(nameof(Guid));
             }
+
             Span<byte> bytes = stackalloc byte[16];
             _reader.TryCopyTo(bytes);
             _reader.Advance(16);
+
             return new Guid(bytes);
         }
 
         public ReadOnlySpan<byte> ReadBytes(int length)
         {
             if (_reader.Remaining < length)
-            {
                 throw new InvalidDataException("Not enough bytes");
-            }
             var span = _reader.CurrentSpan[..length];
             _reader.Advance(length);
+
             return span;
         }
     }

@@ -3,7 +3,7 @@
 namespace FunCraft.Protocol.Packets.Play.Incoming
 {
     /// <summary>
-    /// 0x34 — Set Held Item (C→S)<br/>
+    /// 0x34 — Set Held GetItemId (C→S)<br/>
     /// Sent when the player changes the selected hotbar slot (0–8).
     /// </summary>
     public sealed class SetHeldItemPacket : IIncomingPacket

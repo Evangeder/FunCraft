@@ -5,13 +5,13 @@ namespace FunCraft.Protocol.Packets.Play.Incoming
     using Types;
 
     /// <summary>
-    /// 0x3F — Use Item On (C→S)<br/>
+    /// 0x3F — Use GetItemId On (C→S)<br/>
     /// Sent when the player right-clicks a block face (block placement, interaction).
     /// </summary>
     public sealed class UseItemOnPacket : IIncomingPacket
     {
         /// <summary>
-        /// Cursor X/Y/Z (3× float = 12 bytes) + Inside Block (bool) + World Border Hit (bool) = 14 bytes
+        /// Cursor X/Y/Z (3× float = 12 bytes) + Inside GetBlockId (bool) + World Border Hit (bool) = 14 bytes
         /// </summary>
         private const int CursorAndInsideBlockLength = 14;
 

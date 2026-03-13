@@ -14,6 +14,7 @@ namespace FunCraft.Protocol.Registry
         public static void Load()
         {
             var data = (byte[])Resources.ResourceManager.GetObject("registries")!;
+
             var pos = 0;
 
             var packets = new List<RegistryDataPacket>();
@@ -54,6 +55,8 @@ namespace FunCraft.Protocol.Registry
 
             FramedPackets = framed;
 
+            RegistryLookup.Build(data.AsSpan());
+
             Packets = [];
         }
 
@@ -72,7 +75,7 @@ namespace FunCraft.Protocol.Registry
             return buf.AsMemory();
         }
 
-        private static int ReadVarInt(byte[] data, ref int pos)
+        internal static int ReadVarInt(byte[] data, ref int pos)
         {
             int value = 0, shift = 0;
             while (true)
@@ -84,7 +87,7 @@ namespace FunCraft.Protocol.Registry
             }
         }
 
-        private static string ReadString(byte[] data, ref int pos)
+        internal static string ReadString(byte[] data, ref int pos)
         {
             var len = ReadVarInt(data, ref pos);
             var str = Encoding.UTF8.GetString(data, pos, len);

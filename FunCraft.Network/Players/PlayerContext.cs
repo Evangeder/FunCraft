@@ -32,7 +32,7 @@ namespace FunCraft.Network.Players
         /// <summary>Convenience: the item currently held in-hand.</summary>
         public ref HotbarSlot HeldItem => ref Inventory[36 + HeldSlot];
 
-        /// <summary>Item attached to the player's cursor during inventory interactions.</summary>
+        /// <summary>GetItemId attached to the player's cursor during inventory interactions.</summary>
         public HotbarSlot CursorItem { get; set; } = HotbarSlot.Empty;
 
         // ── Drag / paint state (mode 5) ──────────────────────────────────────────

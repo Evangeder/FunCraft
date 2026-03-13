@@ -4,8 +4,8 @@
     using IO;
 
     /// <summary>
-    /// 0x04 — Acknowledge Block Change (S→C)
-    /// <br/>Must be sent after every serverbound Player Action / Use Item On
+    /// 0x04 — Acknowledge GetBlockId Change (S→C)
+    /// <br/>Must be sent after every serverbound Player Action / Use GetItemId On
     /// to confirm the sequence ID. Without it the client desynchronises.
     /// </summary>
     public sealed class AcknowledgeBlockChangePacket : IPacket

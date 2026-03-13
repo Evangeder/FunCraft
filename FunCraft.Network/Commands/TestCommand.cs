@@ -1,4 +1,6 @@
-﻿namespace FunCraft.Network.Commands
+﻿using FunCraft.Protocol.Registry;
+
+namespace FunCraft.Network.Commands
 {
     using Connections;
     using Data.Inventory;
@@ -11,7 +13,7 @@
     public sealed class TestCommand(PlayerContext ctx) : ICommand
     {
         public string Name => "test";
-        public string Description => "Gives you 64× dirt (hotbar slot 1).";
+        public string Description => "Gives you 64x minecraft:oak_log (hotbar slot 1).";
 
         private const int DirtItemId = 28;
         private const int HotbarSlot0 = 36; // inventory wire index for hotbar slot 0
@@ -20,18 +22,19 @@
         public async Task ExecuteAsync(
             string[] args, Func<string, Task> respond, IPacketSender sender, CancellationToken ct)
         {
-            ctx.Inventory[HotbarSlot0] = new HotbarSlot(DirtItemId, StackSize);
+            var itemId = RegistryLookup.GetItemId("minecraft:oak_log"u8);
+            ctx.Inventory[HotbarSlot0] = new HotbarSlot(itemId, StackSize);
 
             await sender.SendAsync(new SetContainerSlotPacket
             {
                 WindowId = 0,
                 StateId = 0,
                 Slot = HotbarSlot0,
-                ItemId = DirtItemId,
+                ItemId = itemId,
                 Count = StackSize,
             }, ct);
 
-            await respond("§aGiven 64× dirt — check hotbar slot 1.");
+            await respond("§aGiven 64x minecraft:oak_log — check hotbar slot 1.");
         }
     }
 }

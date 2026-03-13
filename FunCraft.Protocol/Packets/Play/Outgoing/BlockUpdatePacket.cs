@@ -4,7 +4,7 @@
     using Types;
 
     /// <summary>
-    /// 0x08 — Block Update (S→C)
+    /// 0x08 — GetBlockId Update (S→C)
     /// <br/>Sets a single block in the world on the client.
     /// </summary>
     public sealed class BlockUpdatePacket : IPacket

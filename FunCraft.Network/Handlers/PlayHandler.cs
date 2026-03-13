@@ -1,4 +1,5 @@
 ﻿using System.Buffers;
+using System.Text;
 using Microsoft.Extensions.Logging;
 
 namespace FunCraft.Network.Handlers
@@ -40,6 +41,15 @@ namespace FunCraft.Network.Handlers
         private const double DefaultSpawnZ = 0.5;
 
         private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(10);
+
+        private static readonly byte[] MsgWelcome =
+            "Hello, welcome to the FunC#raft server!"u8.ToArray();
+        private static readonly byte[] MsgInDev =
+            "This server is heavily in development."u8.ToArray();
+        private static readonly byte[] JoinPrefix =
+            "Player '§e"u8.ToArray();
+        private static readonly byte[] JoinSuffix =
+            "§f' joined the game."u8.ToArray();
 
         private readonly CommandDispatcher _localCommands = new();
 
@@ -127,7 +137,9 @@ namespace FunCraft.Network.Handlers
                 rentedInv.AsSpan(0, InventorySlot.InventorySize).Clear();
                 var hadSaved = await inventory.TryGetInventoryAsync(ctx.Uuid, rentedInv.AsMemory(0, InventorySlot.InventorySize), ct);
                 if (hadSaved)
+                {
                     rentedInv.AsSpan(0, InventorySlot.InventorySize).CopyTo(ctx.Inventory);
+                }
             }
             finally
             {
@@ -148,9 +160,9 @@ namespace FunCraft.Network.Handlers
 
             _ = KeepAliveLoopAsync(ct);
 
-            await registry.BroadcastAsync(new SystemChatMessagePacket { Content = $"Player '§e{ctx.Username}§f' joined the game." }, ct);
-            await Sender.SendAsync(new SystemChatMessagePacket { Content = "Hello, welcome to the FunC#raft server!" }, ct);
-            await Sender.SendAsync(new SystemChatMessagePacket { Content = "This server is heavily in development." }, ct);
+            await registry.BroadcastAsync(new SystemChatMessagePacket { Content = Encoding.UTF8.GetBytes($"Player '§e{ctx.Username}§f' joined the game.") }, ct);
+            await Sender.SendAsync(new SystemChatMessagePacket { Content = MsgWelcome }, ct);
+            await Sender.SendAsync(new SystemChatMessagePacket { Content = MsgInDev }, ct);
         }
 
         internal override async ValueTask<ConnectionState> HandleAsync(
@@ -801,25 +813,26 @@ namespace FunCraft.Network.Handlers
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new ChatMessagePacket();
+            if (!packet.TryRead(ref reader)) return;
 
-            if (!packet.TryRead(ref reader))
-            {
-                return;
-            }
+            // Trim ASCII whitespace (≤0x20) without allocating.
+            var msgSpan = packet.Message.Span;
+            var start = 0;
+            while (start < msgSpan.Length && msgSpan[start] <= 32) start++;
+            var end = msgSpan.Length;
+            while (end > start && msgSpan[end - 1] <= 32) end--;
+            if (end <= start) return;
 
-            var message = packet.Message.Trim();
+            var message = packet.Message.Slice(start, end - start);
 
-            if (string.IsNullOrEmpty(message))
-            {
-                return;
-            }
+            Func<ReadOnlyMemory<byte>, Task> respond =
+                text => Sender.SendAsync(new SystemChatMessagePacket { Content = text }, ct).AsTask();
 
-            if (await commands.TryDispatchAsync(message, respond: text => Sender.SendAsync(new SystemChatMessagePacket { Content = text }, ct).AsTask(), sender: Sender, ct))
-            {
-                return;
-            }
+            if (await commands.TryDispatchAsync(message, respond, Sender, ct)) return;
 
-            var chatLine = $"§7<§f{ctx.Username}§7> {message}";
+            // Broadcast as "<username> message" — decode once, re-encode into one alloc.
+            var msgStr = Encoding.UTF8.GetString(message.Span);
+            var chatLine = Encoding.UTF8.GetBytes($"§7<§f{ctx.Username}§7> {msgStr}");
             await registry.BroadcastRawAsync(new SystemChatMessagePacket { Content = chatLine }, Guid.Empty, ct);
         }
 
@@ -829,12 +842,20 @@ namespace FunCraft.Network.Handlers
             var packet = new ChatCommandPacket();
             if (!packet.TryRead(ref reader)) return;
 
-            var withSlash = '/' + packet.Command;
-            Func<string, Task> respond = text => Sender.SendAsync(new SystemChatMessagePacket { Content = text }, ct).AsTask();
+            // The packet omits the leading '/'; prepend it so the dispatcher can
+            // use a uniform "starts with '/'" check on every code path.
+            var cmd = packet.Command;
+            var withSlash = new byte[1 + cmd.Length];
+            withSlash[0] = (byte)'/';
+            cmd.Span.CopyTo(withSlash.AsSpan(1));
+            var withSlashMem = withSlash.AsMemory();
 
-            if (!await _localCommands.TryDispatchAsync(withSlash, respond, Sender, ct))
+            Func<ReadOnlyMemory<byte>, Task> respond =
+                text => Sender.SendAsync(new SystemChatMessagePacket { Content = text }, ct).AsTask();
+
+            if (!await _localCommands.TryDispatchAsync(withSlashMem, respond, Sender, ct))
             {
-                await commands.TryDispatchAsync(withSlash, respond, Sender, ct);
+                await commands.TryDispatchAsync(withSlashMem, respond, Sender, ct);
             }
         }
 
@@ -894,7 +915,7 @@ namespace FunCraft.Network.Handlers
             var packet = new ChunkBatchReceivedPacket();
             if (packet.TryRead(ref reader))
             {
-                Console.WriteLine($"[PlayHandler] client wants {packet.DesiredChunksPerTick:F2} chunks/tick");
+                //Console.WriteLine($"[PlayHandler] client wants {packet.DesiredChunksPerTick:F2} chunks/tick");
             }
         }
 

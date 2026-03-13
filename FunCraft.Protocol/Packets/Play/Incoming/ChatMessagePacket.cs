@@ -5,10 +5,10 @@ namespace FunCraft.Protocol.Packets.Play.Incoming
     using Types;
 
     /// <summary>
-    /// 0x05 — Chat Message (C→S)<br/>
-    /// Sent when the player sends a chat message. The packet also carries a
-    /// timestamp, salt, optional signature, and an acknowledgement bitset —
-    /// all of which we read past but don't use in offline mode.
+    /// 0x08 — Chat Message (C→S)<br/>
+    /// The raw message bytes (max 256 chars) without decoding to string.
+    /// Timestamp, salt, optional signature and the acknowledgement bitset are
+    /// read past but discarded — we run in offline mode.
     /// </summary>
     public sealed class ChatMessagePacket : IIncomingPacket
     {
@@ -18,13 +18,13 @@ namespace FunCraft.Protocol.Packets.Play.Incoming
         public const int Id = 0x08;
 
         /// <summary>
-        /// The raw message text, max 256 characters.
+        /// Raw UTF-8 bytes of the chat message, max 256 chars.
         /// </summary>
-        public string Message { get; private set; } = string.Empty;
+        public ReadOnlyMemory<byte> Message { get; private set; } = ReadOnlyMemory<byte>.Empty;
 
         public bool TryRead(ref SequenceReader<byte> reader)
         {
-            if (!McString.TryRead(ref reader, out var message)) return false;
+            if (!McString.TryReadRaw(ref reader, out var message)) return false;
             Message = message;
 
             if (reader.Remaining < TimestampSaltLength) return false;

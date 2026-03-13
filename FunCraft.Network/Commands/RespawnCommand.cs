@@ -4,14 +4,19 @@
     using Players;
     using Protocol.Packets.Play.Outgoing;
 
-    /// <summary>/test — puts 64× dirt in hotbar slot 0 and tracks it server-side.</summary>
+    /// <summary>/respawn — teleports the player back to spawn (0, 128, 0).</summary>
     public sealed class RespawnCommand(PlayerContext ctx) : ICommand
     {
-        public string Name => "respawn";
-        public string Description => "Respawns the player.";
+        public ReadOnlySpan<byte> Name => "respawn"u8;
+        public ReadOnlySpan<byte> Description => "Respawns the player at spawn."u8;
+
+        private static readonly byte[] MsgRespawned = "§aRespawned."u8.ToArray();
 
         public async Task ExecuteAsync(
-            string[] args, Func<string, Task> respond, IPacketSender sender, CancellationToken ct)
+            ReadOnlyMemory<byte> args,
+            Func<ReadOnlyMemory<byte>, Task> respond,
+            IPacketSender sender,
+            CancellationToken ct)
         {
             ctx.X = 0;
             ctx.Y = 128;
@@ -31,7 +36,7 @@
                 Flags = 0
             }, ct);
 
-            await respond("§aRespawned.");
+            await respond(MsgRespawned);
         }
     }
 }

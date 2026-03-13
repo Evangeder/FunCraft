@@ -15,6 +15,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\FunCraft.Protocol\FunCraft.Protocol.csproj" />
     <ProjectReference Include="..\FunCraft.World\FunCraft.World.csproj" />
   </ItemGroup>
 

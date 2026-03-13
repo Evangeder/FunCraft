@@ -1,9 +1,13 @@
-﻿namespace FunCraft.Protocol.Registry
+﻿using System.Text;
+
+namespace FunCraft.Protocol.Registry
 {
     public static class RegistryLookup
     {
 #pragma warning disable CS8618
+#pragma warning disable CA1859
         private static IReadOnlyDictionary<uint, IReadOnlyDictionary<uint, int>> _registries;
+#pragma warning restore CA1859
 #pragma warning restore CS8618
 
         public static void Build(ReadOnlySpan<byte> data)
@@ -15,13 +19,22 @@
             var registryCount = ReadVarInt(data, ref pos);
             for (var r = 0; r < registryCount; r++)
             {
-                var hashedRegistryKey = Hash(ReadString(data, ref pos));
+                var rawRegistryKey = ReadString(data, ref pos);
+                var hashedRegistryKey = Hash(rawRegistryKey);
                 var entryCount = ReadVarInt(data, ref pos);
                 var hashedMap = new Dictionary<uint, int>(entryCount);
 
                 for (var e = 0; e < entryCount; e++)
                 {
-                    var hashedKey = Hash(ReadString(data, ref pos));
+                    var rawKey = ReadString(data, ref pos);
+                    var hashedKey = Hash(rawKey);
+
+                    // this is utterly wrong, since it uses enumeration as id lmao
+                    if (Encoding.UTF8.GetString(rawRegistryKey) == "minecraft:block")
+                    {
+                        Console.WriteLine($"\t{Encoding.UTF8.GetString(rawKey)}");
+                    }
+
                     hashedMap[hashedKey] = e;
                     var hasNbt = data[pos++] != 0;
 
@@ -64,8 +77,8 @@
         /// <summary>
         /// Shorthand for minecraft:block.
         /// </summary>
-        public static int GetBlockId(ReadOnlySpan<byte> name)
-            => GetId("minecraft:block"u8, name);
+        public static ushort GetBlockId(ReadOnlySpan<byte> name)
+            => (ushort)GetId("minecraft:block"u8, name);
 
         private static uint Hash(ReadOnlySpan<byte> data)
         {

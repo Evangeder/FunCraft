@@ -15,6 +15,7 @@ namespace FunCraft.Network.Handlers
     using Protocol.Types;
     using World;
 
+    // I'm leaving this here for future logging (to do not forget how to do it optimally)
     public static partial class Log
     {
         [LoggerMessage(
@@ -41,7 +42,6 @@ namespace FunCraft.Network.Handlers
 
         private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(10);
 
-        // Static outgoing chat payloads — encoded once, reused on every login.
         private static readonly byte[] MsgWelcome =
             "Hello, welcome to the FunC#raft server!"u8.ToArray();
         private static readonly byte[] MsgInDev =
@@ -233,7 +233,7 @@ namespace FunCraft.Network.Handlers
                 case 0x3C: // Swing Arm
                     break;
 
-                case 0x12: // Close Container
+                case 0x12: // Close Container // TODO: Make actual packet for that lol
                     HandleCloseContainer();
                     break;
 
@@ -275,6 +275,7 @@ namespace FunCraft.Network.Handlers
 
         /// <summary>
         /// Called whenever the player's chunk X/Z changes.
+        /// <br/>TODO: Remove LINQ
         /// </summary>
         private async Task UpdateChunksAsync(int newCx, int newCz, CancellationToken ct)
         {
@@ -302,7 +303,7 @@ namespace FunCraft.Network.Handlers
                     await Sender.SendAsync(new UnloadChunkPacket { ChunkX = x, ChunkZ = z }, ct);
                     _loadedChunks.Remove((x, z));
                 }
-
+                
                 if (toLoad.Count > 0)
                 {
                     await Sender.SendAsync(new ChunkBatchStartPacket(), ct);
@@ -324,6 +325,7 @@ namespace FunCraft.Network.Handlers
         {
             var column = world.GetChunk(chunkX, chunkZ);
             var data = ChunkSerializer.Serialize(column);
+
             await Sender.SendAsync(new ChunkDataPacket
             {
                 ChunkX = chunkX,
@@ -350,6 +352,7 @@ namespace FunCraft.Network.Handlers
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new SetPlayerPositionPacket();
+
             if (!packet.TryRead(ref reader))
             {
                 return;
@@ -365,6 +368,7 @@ namespace FunCraft.Network.Handlers
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new SetPlayerPositionAndRotationPacket();
+
             if (!packet.TryRead(ref reader))
             {
                 return;
@@ -390,7 +394,11 @@ namespace FunCraft.Network.Handlers
 
         private void CheckChunkCrossAsync(CancellationToken ct)
         {
-            if (!_spawnAcknowledged) return;
+            if (!_spawnAcknowledged)
+            {
+                return;
+            }
+
             var cx = WorldToChunk(ctx.X);
             var cz = WorldToChunk(ctx.Z);
             if (cx != _lastChunkX || cz != _lastChunkZ)
@@ -446,16 +454,34 @@ namespace FunCraft.Network.Handlers
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new ClickContainerPacket();
-            if (!packet.TryRead(ref reader)) return;
-            if (packet.WindowId != 0) return;
+
+            if (!packet.TryRead(ref reader))
+            {
+                return;
+            }
+
+            if (packet.WindowId != 0)
+            {
+                return;
+            }
 
             switch (packet.Mode)
             {
-                case 0: ApplyNormalClick(packet.Slot, packet.Button); break;
-                case 1: ApplyShiftClick(packet.Slot); break;
-                case 2: ApplyHotbarSwap(packet.Slot, packet.Button); break;
-                case 5: ApplyDrag(packet.Slot, packet.Button); break;
-                case 6: ApplyDoubleClick(); break;
+                case 0:
+                    ApplyNormalClick(packet.Slot, packet.Button);
+                    break;
+                case 1:
+                    ApplyShiftClick(packet.Slot);
+                    break;
+                case 2:
+                    ApplyHotbarSwap(packet.Slot, packet.Button);
+                    break;
+                case 5:
+                    ApplyDrag(packet.Slot, packet.Button);
+                    break;
+                case 6:
+                    ApplyDoubleClick();
+                    break;
                     // mode 3 = middle-click (creative) — NYI
             }
 
@@ -469,16 +495,26 @@ namespace FunCraft.Network.Handlers
 
         private void ApplyDoubleClick()
         {
-            if (ctx.CursorItem.IsEmpty) return;
+            if (ctx.CursorItem.IsEmpty)
+            {
+                return;
+            }
 
             const int max = 64;
-            if (ctx.CursorItem.Count >= max) return;
+            if (ctx.CursorItem.Count >= max)
+            {
+                return;
+            }
 
             // Sweep all 46 slots; partial stacks first, then full stacks.
             // This matches vanilla's behaviour: partials are consumed before full stacks.
             Sweep(fullStacksOnly: false);
             if (ctx.CursorItem.Count < max)
+            {
                 Sweep(fullStacksOnly: true);
+            }
+
+            return;
 
             void Sweep(bool fullStacksOnly)
             {
@@ -497,40 +533,59 @@ namespace FunCraft.Network.Handlers
             }
         }
 
-
         private ValueTask SendInventorySync(CancellationToken ct)
         {
-            var slots = new (int ItemId, int Count)[InventorySlot.InventorySize];
-            for (var i = 0; i < InventorySlot.InventorySize; i++)
-                slots[i] = (ctx.Inventory[i].ItemId, ctx.Inventory[i].Count);
+            var pool = ArrayPool<(int ItemId, int Count)>.Shared;
+            var slots = pool.Rent(InventorySlot.InventorySize);
 
-            return Sender.SendAsync(new SetContainerContentPacket
+            try
             {
-                WindowId = 0,
-                StateId = ctx.NextStateId(),
-                Slots = slots,
-                CarriedItemId = ctx.CursorItem.ItemId,
-                CarriedItemCount = ctx.CursorItem.Count,
-            }, ct);
-        }
+                for (var i = 0; i < InventorySlot.InventorySize; i++)
+                {
+                    slots[i] = (ctx.Inventory[i].ItemId, ctx.Inventory[i].Count);
+                }
 
-        // ── Close Container ──────────────────────────────────────────────────────
+                var packetSlots = slots.AsSpan(0, InventorySlot.InventorySize).ToArray();
+
+                return Sender.SendAsync(new SetContainerContentPacket
+                {
+                    WindowId = 0,
+                    StateId = ctx.NextStateId(),
+                    Slots = packetSlots,
+                    CarriedItemId = ctx.CursorItem.ItemId,
+                    CarriedItemCount = ctx.CursorItem.Count,
+                }, ct);
+            }
+            finally
+            {
+                pool.Return(slots);
+            }
+        }
 
         private void HandleCloseContainer()
         {
-            if (ctx.CursorItem.IsEmpty) return;
+            if (ctx.CursorItem.IsEmpty)
+            {
+                return;
+            }
 
             // Try to return cursor item to the first available inventory slot (9-44).
             // TODO: if no space, spawn a dropped item entity instead.
             for (var i = 9; i <= 44; i++)
             {
-                if (!ctx.Inventory[i].IsEmpty) continue;
+                if (!ctx.Inventory[i].IsEmpty)
+                {
+                    continue;
+                }
+
                 ctx.Inventory[i] = ctx.CursorItem;
                 ctx.CursorItem = InventorySlot.Empty;
+
                 return;
             }
 
-            // No free slot — item is lost for now (TODO: drop on ground).
+            // No free slot — item is lost for now
+            // TODO: drop on ground
             ctx.CursorItem = InventorySlot.Empty;
         }
 
@@ -540,73 +595,87 @@ namespace FunCraft.Network.Handlers
             if (slot < 0)
             {
                 if (button == 0)
+                {
                     ctx.CursorItem = InventorySlot.Empty;
+                }
                 else if (!ctx.CursorItem.IsEmpty)
+                {
                     ctx.CursorItem = ctx.CursorItem.Count > 1
                         ? new InventorySlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count - 1)
                         : InventorySlot.Empty;
+                }
+
                 return;
             }
 
-            if (slot >= InventorySlot.InventorySize) return;
+            if (slot >= InventorySlot.InventorySize)
+            {
+                return;
+            }
+
             ref var inv = ref ctx.Inventory[slot];
 
-            if (button == 0)
+            switch (button)
             {
-                if (ctx.CursorItem.IsEmpty)
-                {
-                    ctx.CursorItem = inv;
-                    inv = InventorySlot.Empty;
-                }
-                else if (inv.IsEmpty)
-                {
-                    inv = ctx.CursorItem;
-                    ctx.CursorItem = InventorySlot.Empty;
-                }
-                else if (ctx.CursorItem.ItemId == inv.ItemId)
-                {
-                    var total = ctx.CursorItem.Count + inv.Count;
-                    const int max = 64;
-                    inv = new InventorySlot(inv.ItemId, Math.Min(total, max));
-                    ctx.CursorItem = total > max
-                        ? new InventorySlot(ctx.CursorItem.ItemId, total - max)
-                        : InventorySlot.Empty;
-                }
-                else
-                {
-                    (ctx.CursorItem, inv) = (inv, ctx.CursorItem);
-                }
-            }
-            else if (button == 1)
-            {
-                if (ctx.CursorItem.IsEmpty && !inv.IsEmpty)
-                {
-                    var take = (inv.Count + 1) / 2;
-                    var leave = inv.Count - take;
-                    ctx.CursorItem = new InventorySlot(inv.ItemId, take);
-                    inv = leave > 0 ? new InventorySlot(inv.ItemId, leave) : InventorySlot.Empty;
-                }
-                else if (!ctx.CursorItem.IsEmpty && inv.IsEmpty)
-                {
-                    inv = new InventorySlot(ctx.CursorItem.ItemId, 1);
-                    ctx.CursorItem = ctx.CursorItem.Count > 1
-                        ? new InventorySlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count - 1)
-                        : InventorySlot.Empty;
-                }
-                else if (!ctx.CursorItem.IsEmpty && ctx.CursorItem.ItemId == inv.ItemId)
-                {
-                    if (inv.Count < 64)
+                case 0:
+                    if (ctx.CursorItem.IsEmpty)
                     {
-                        inv = new InventorySlot(inv.ItemId, inv.Count + 1);
-                        ctx.CursorItem = ctx.CursorItem.Count > 1
-                            ? new InventorySlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count - 1)
+                        ctx.CursorItem = inv;
+                        inv = InventorySlot.Empty;
+                    }
+                    else if (inv.IsEmpty)
+                    {
+                        inv = ctx.CursorItem;
+                        ctx.CursorItem = InventorySlot.Empty;
+                    }
+                    else if (ctx.CursorItem.ItemId == inv.ItemId)
+                    {
+                        var total = ctx.CursorItem.Count + inv.Count;
+                        const int max = 64;
+                        inv = new InventorySlot(inv.ItemId, Math.Min(total, max));
+                        ctx.CursorItem = total > max
+                            ? new InventorySlot(ctx.CursorItem.ItemId, total - max)
                             : InventorySlot.Empty;
                     }
-                }
-                else if (!ctx.CursorItem.IsEmpty && !inv.IsEmpty)
-                {
-                    (ctx.CursorItem, inv) = (inv, ctx.CursorItem);
-                }
+                    else
+                    {
+                        (ctx.CursorItem, inv) = (inv, ctx.CursorItem);
+                    }
+                    break;
+
+                case 1:
+                    switch (ctx.CursorItem, inv)
+                    {
+                        case ({ IsEmpty: true }, { IsEmpty: false }):
+                            var take = (inv.Count + 1) / 2;
+                            var leave = inv.Count - take;
+                            ctx.CursorItem = new InventorySlot(inv.ItemId, take);
+                            inv = leave > 0 ? new InventorySlot(inv.ItemId, leave) : InventorySlot.Empty;
+                            break;
+
+                        case ({ IsEmpty: false }, { IsEmpty: true }):
+                            inv = new InventorySlot(ctx.CursorItem.ItemId, 1);
+                            ctx.CursorItem = ctx.CursorItem.Count > 1
+                                ? new InventorySlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count - 1)
+                                : InventorySlot.Empty;
+                            break;
+
+
+                        case ({ IsEmpty: false }, _) when ctx.CursorItem.ItemId == inv.ItemId:
+                            if (inv.Count < 64) // todo Get stack sizes per itemId - can get through items.json dumped from mcserver
+                            {
+                                inv = new InventorySlot(inv.ItemId, inv.Count + 1);
+                                ctx.CursorItem = ctx.CursorItem.Count > 1
+                                    ? new InventorySlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count - 1)
+                                    : InventorySlot.Empty;
+                            }
+                            break;
+
+                        case ({ IsEmpty: false }, { IsEmpty: false }):
+                            (ctx.CursorItem, inv) = (inv, ctx.CursorItem);
+                            break;
+                    }
+                    break;
             }
         }
 
@@ -626,30 +695,42 @@ namespace FunCraft.Network.Handlers
             for (var i = destStart; i <= destEnd && !src.IsEmpty; i++)
             {
                 ref var dest = ref ctx.Inventory[i];
-                if (!dest.IsEmpty && dest.ItemId == src.ItemId && dest.Count < 64)
+                if (dest.IsEmpty || dest.ItemId != src.ItemId || dest.Count >= 64)
                 {
-                    var transfer = Math.Min(64 - dest.Count, src.Count);
-                    dest = new InventorySlot(dest.ItemId, dest.Count + transfer);
-                    var remaining = src.Count - transfer;
-                    src = remaining > 0 ? new InventorySlot(src.ItemId, remaining) : InventorySlot.Empty;
+                    continue;
                 }
+
+                var transfer = Math.Min(64 - dest.Count, src.Count);
+                dest = new InventorySlot(dest.ItemId, dest.Count + transfer);
+                var remaining = src.Count - transfer;
+                src = remaining > 0 ? new InventorySlot(src.ItemId, remaining) : InventorySlot.Empty;
             }
 
             for (var i = destStart; i <= destEnd && !src.IsEmpty; i++)
             {
                 ref var dest = ref ctx.Inventory[i];
-                if (dest.IsEmpty)
+                if (!dest.IsEmpty)
                 {
-                    dest = src;
-                    src = InventorySlot.Empty;
+                    continue;
                 }
+
+                dest = src;
+                src = InventorySlot.Empty;
             }
         }
 
         private void ApplyHotbarSwap(short slot, byte button)
         {
-            if (slot < 0 || slot >= InventorySlot.InventorySize) return;
-            if (button > 8) return;
+            if (slot is < 0 or >= InventorySlot.InventorySize)
+            {
+                return;
+            }
+
+            if (button > 8)
+            {
+                return;
+            }
+
             var hotbarSlot = 36 + button;
             (ctx.Inventory[slot], ctx.Inventory[hotbarSlot]) = (ctx.Inventory[hotbarSlot], ctx.Inventory[slot]);
         }
@@ -675,25 +756,51 @@ namespace FunCraft.Network.Handlers
 
                 case 1: // add slot to left-drag
                 case 5: // add slot to right-drag
-                    if (ctx.DragButton < 0) return;
-                    if (slot >= 0 && slot < InventorySlot.InventorySize)
+                    if (ctx.DragButton < 0)
+                    {
+                        return;
+                    }
+
+                    if (slot is >= 0 and < InventorySlot.InventorySize)
+                    {
                         ctx.DragSlots.Add(slot);
+                    }
+
                     break;
 
                 case 2: // commit left-drag — distribute cursor stack evenly
                     {
-                        if (ctx.DragButton != 0 || ctx.DragSlots.Count == 0 || ctx.CursorItem.IsEmpty) break;
+                        if (ctx.DragButton != 0 || ctx.DragSlots.Count == 0 || ctx.CursorItem.IsEmpty)
+                        {
+                            break;
+                        }
 
-                        // Only target slots that are empty or hold the same item.
-                        var targets = ctx.DragSlots
-                            .Where(s => ctx.Inventory[s].IsEmpty || ctx.Inventory[s].ItemId == ctx.CursorItem.ItemId)
-                            .OrderBy(s => s)
-                            .ToList();
+                        Span<int> targets = stackalloc int[ctx.DragSlots.Count];
+                        var count = 0;
 
-                        if (targets.Count == 0) break;
+                        foreach (var s in ctx.DragSlots)
+                        {
+                            ref var inventorySlot = ref ctx.Inventory[s];
 
-                        var perSlot = ctx.CursorItem.Count / targets.Count;
-                        if (perSlot < 1) break; // not enough items to spread
+                            if (inventorySlot.IsEmpty || inventorySlot.ItemId == ctx.CursorItem.ItemId)
+                            {
+                                targets[count++] = s;
+                            }
+                        }
+
+                        targets = targets[..count];
+                        targets.Sort();
+
+                        if (targets.Length == 0)
+                        {
+                            break;
+                        }
+
+                        var perSlot = ctx.CursorItem.Count / targets.Length;
+                        if (perSlot < 1)
+                        {
+                            break; // not enough items to spread
+                        }
 
                         var remaining = ctx.CursorItem.Count;
                         foreach (var s in targets)
@@ -716,30 +823,53 @@ namespace FunCraft.Network.Handlers
                     }
 
                 case 6: // commit right-drag — place one item in each targeted slot
+                {
+                    if (ctx.DragButton != 1 || ctx.DragSlots.Count == 0 || ctx.CursorItem.IsEmpty)
                     {
-                        if (ctx.DragButton != 1 || ctx.DragSlots.Count == 0 || ctx.CursorItem.IsEmpty) break;
-
-                        var remaining = ctx.CursorItem.Count;
-                        foreach (var s in ctx.DragSlots.OrderBy(x => x))
-                        {
-                            if (remaining <= 0) break;
-                            ref var inv = ref ctx.Inventory[s];
-                            if (!inv.IsEmpty && inv.ItemId != ctx.CursorItem.ItemId) continue;
-                            if (!inv.IsEmpty && inv.Count >= 64) continue;
-
-                            var current = inv.IsEmpty ? 0 : inv.Count;
-                            inv = new InventorySlot(ctx.CursorItem.ItemId, current + 1);
-                            remaining--;
-                        }
-
-                        ctx.CursorItem = remaining > 0
-                            ? new InventorySlot(ctx.CursorItem.ItemId, remaining)
-                            : InventorySlot.Empty;
-
-                        ctx.DragButton = -1;
-                        ctx.DragSlots.Clear();
                         break;
                     }
+
+                    Span<int> slots = stackalloc int[ctx.DragSlots.Count];
+                    var slotCount = 0;
+
+                    foreach (var s in ctx.DragSlots)
+                    {
+                        slots[slotCount++] = s;
+                    }
+
+                    slots = slots[..slotCount];
+                    slots.Sort();
+
+                    var remaining = ctx.CursorItem.Count;
+
+                    for (var i = 0; i < slots.Length && remaining > 0; i++)
+                    {
+                        var s = slots[i];
+                        ref var inv = ref ctx.Inventory[s];
+
+                        if (!inv.IsEmpty && inv.ItemId != ctx.CursorItem.ItemId)
+                        {
+                            continue;
+                        }
+
+                        if (inv is {IsEmpty: false, Count: >= 64})
+                        {
+                            continue;
+                        }
+
+                        var current = inv.IsEmpty ? 0 : inv.Count;
+                        inv = new InventorySlot(ctx.CursorItem.ItemId, current + 1);
+                        remaining--;
+                    }
+
+                    ctx.CursorItem = remaining > 0
+                        ? new InventorySlot(ctx.CursorItem.ItemId, remaining)
+                        : InventorySlot.Empty;
+
+                    ctx.DragButton = -1;
+                    ctx.DragSlots.Clear();
+                    break;
+                }
             }
         }
 
@@ -822,23 +952,25 @@ namespace FunCraft.Network.Handlers
             while (end > start && msgSpan[end - 1] <= 32) end--;
             if (end <= start) return;
 
-            var message = packet.Message.Slice(start, end - start);
+            var message = packet.Message[start..(end - start)];
 
-            Func<ReadOnlyMemory<byte>, Task> respond =
-                text => Sender.SendAsync(new SystemChatMessagePacket { Content = text }, ct).AsTask();
-
-            if (await commands.TryDispatchAsync(message, respond, Sender, ct)) return;
+            if (await commands.TryDispatchAsync(message, Respond, Sender, ct)) return;
 
             // Message starts with '/' but no dispatcher claimed it.
             if (message.Span[0] == (byte)'/')
             {
-                await respond(ConcatBytes("§cUnknown command: "u8, message.Span, MsgUnknownCommandSuffix));
+                await Respond(ConcatBytes("§cUnknown command: "u8, message.Span, MsgUnknownCommandSuffix));
                 return;
             }
 
             // Broadcast "<username> message" — pure span concat, no intermediate string.
             var chatLine = ConcatBytes("\u00a77<\u00a7f"u8, ctx.Username.Span, "\u00a77> "u8, message.Span);
             await registry.BroadcastRawAsync(new SystemChatMessagePacket { Content = chatLine }, Guid.Empty, ct);
+
+            return;
+
+            Task Respond(ReadOnlyMemory<byte> text)
+                => Sender.SendAsync(new SystemChatMessagePacket { Content = text }, ct).AsTask();
         }
 
         private static readonly byte[] MsgUnknownCommandSuffix =
@@ -848,7 +980,11 @@ namespace FunCraft.Network.Handlers
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new ChatCommandPacket();
-            if (!packet.TryRead(ref reader)) return;
+
+            if (!packet.TryRead(ref reader))
+            {
+                return;
+            }
 
             var cmd = packet.Command;
             var withSlash = new byte[1 + cmd.Length];
@@ -856,13 +992,22 @@ namespace FunCraft.Network.Handlers
             cmd.Span.CopyTo(withSlash.AsSpan(1));
             var withSlashMem = withSlash.AsMemory();
 
-            Func<ReadOnlyMemory<byte>, Task> respond =
-                text => Sender.SendAsync(new SystemChatMessagePacket { Content = text }, ct).AsTask();
+            if (await _localCommands.TryDispatchAsync(withSlashMem, Respond, Sender, ct))
+            {
+                return;
+            }
 
-            if (await _localCommands.TryDispatchAsync(withSlashMem, respond, Sender, ct)) return;
-            if (await commands.TryDispatchAsync(withSlashMem, respond, Sender, ct)) return;
+            if (await commands.TryDispatchAsync(withSlashMem, Respond, Sender, ct))
+            {
+                return;
+            }
 
-            await respond(ConcatBytes("§cUnknown command: "u8, withSlash, MsgUnknownCommandSuffix));
+            await Respond(ConcatBytes("§cUnknown command: "u8, withSlash, MsgUnknownCommandSuffix));
+
+            return;
+
+            Task Respond(ReadOnlyMemory<byte> text)
+                => Sender.SendAsync(new SystemChatMessagePacket { Content = text }, ct).AsTask();
         }
 
         private static PlayerInfoUpdatePacket BuildInfoUpdate(IReadOnlyList<ConnectedPlayer> players)

@@ -31,7 +31,10 @@ namespace FunCraft.Network.Commands
                 Task> respond, IPacketSender sender, CancellationToken ct)
         {
             var span = rawMessage.Span;
-            if (span.IsEmpty || span[0] != (byte)'/') return false;
+            if (span.IsEmpty || span[0] != (byte) '/')
+            {
+                return false;
+            }
 
             var rest = span[1..];
             var spaceIdx = rest.IndexOf((byte)' ');
@@ -43,9 +46,12 @@ namespace FunCraft.Network.Commands
 
             var nameStr = Encoding.UTF8.GetString(nameSpan);
             if (!_commands.TryGetValue(nameStr, out var command))
+            {
                 return false;
+            }
 
             await command.ExecuteAsync(args, respond, sender, ct);
+
             return true;
         }
     }

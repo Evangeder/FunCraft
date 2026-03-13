@@ -4,6 +4,7 @@ namespace FunCraft.Data.Inventory
 {
     /// <summary>
     /// Cache-aside decorator over <see cref="PostgresInventoryRepository"/>.
+    /// No heap allocations on the hot (cache-hit) path — the caller owns the buffer.
     /// </summary>
     public sealed class CachedInventoryRepository(PostgresInventoryRepository db, IDatabase redis) : IInventoryRepository
     {
@@ -12,112 +13,61 @@ namespace FunCraft.Data.Inventory
         private const string SentinelField = "sentinel";
         private const string SentinelValue = "1";
 
-        private static readonly string[] SlotNames = ["0", "1", "2", "3", "4", "5", "6", "7", "8"];
-
-        public async Task<HotbarSlot[]?> GetHotbarAsync(Guid uuid, CancellationToken ct = default)
+        public async ValueTask<bool> TryGetInventoryAsync(
+            Guid uuid, Memory<HotbarSlot> destination, CancellationToken ct = default)
         {
             var key = Key(uuid);
             var entries = await redis.HashGetAllAsync(key);
 
             if (entries.Length > 0)
             {
-                if (entries.Length == 1 && (string?) entries[0].Name == SentinelField)
-                {
-                    return null;
-                }
+                if (entries.Length == 1 && (string?)entries[0].Name == SentinelField)
+                    return false;
 
-                var hotbar = new HotbarSlot[9];
-
+                var span = destination.Span;
                 foreach (var e in entries)
                 {
                     var name = (string?)e.Name;
-
-                    if (name is null or SentinelField)
-                    {
-                        continue;
-                    }
-
-                    if (!int.TryParse(name, out var slot) || slot < 0 || slot > 8)
-                    {
-                        continue;
-                    }
-
+                    if (name is null or SentinelField) continue;
+                    if (!int.TryParse(name, out var slot) || (uint)slot >= HotbarSlot.InventorySize) continue;
                     if (TryParseSlotValue(e.Value, out var hs))
-                    {
-                        hotbar[slot] = hs;
-                    }
+                        span[slot] = hs;
                 }
-                return hotbar;
+
+                return true;
             }
 
-            var result = await db.GetHotbarAsync(uuid, ct);
-            await PopulateCacheAsync(key, result);
-
-            return result;
+            var found = await db.TryGetInventoryAsync(uuid, destination, ct);
+            await PopulateCacheAsync(key, found ? destination : default);
+            return found;
         }
 
-        public async Task SaveHotbarAsync(Guid uuid, HotbarSlot[] hotbar, CancellationToken ct = default)
+        public async ValueTask SaveInventoryAsync(
+            Guid uuid, ReadOnlyMemory<HotbarSlot> inventory, CancellationToken ct = default)
         {
-            await db.SaveHotbarAsync(uuid, hotbar, ct);
+            await db.SaveInventoryAsync(uuid, inventory, ct);
 
             var key = Key(uuid);
             await redis.KeyDeleteAsync(key);
-
-            var hasItems = false;
-
-            foreach (var item in hotbar)
-            {
-                if (!item.IsEmpty)
-                {
-                    hasItems = true;
-                    break;
-                }
-            }
-
-            await PopulateCacheAsync(key, hasItems ? hotbar : null);
+            await PopulateCacheAsync(key, inventory);
         }
 
-        private async Task PopulateCacheAsync(RedisKey key, HotbarSlot[]? hotbar)
+        private async Task PopulateCacheAsync(RedisKey key, ReadOnlyMemory<HotbarSlot> inv)
         {
-            if (hotbar is null)
+            var span = inv.Span;
+            var entries = new List<HashEntry>(HotbarSlot.InventorySize);
+
+            for (var i = 0; i < span.Length; i++)
             {
+                if (!span[i].IsEmpty)
+                    entries.Add(new HashEntry(i.ToString(), $"{span[i].ItemId}:{span[i].Count}"));
+            }
+
+            if (entries.Count == 0)
                 await redis.HashSetAsync(key, SentinelField, SentinelValue);
-                await redis.KeyExpireAsync(key, CacheTtl);
+            else
+                await redis.HashSetAsync(key, [.. entries]);
 
-                return;
-            }
-
-            var count = 0;
-
-            foreach (var item in hotbar)
-            {
-                if (!item.IsEmpty)
-                {
-                    count++;
-                }
-            }
-
-            if (count == 0)
-            {
-                await redis.HashSetAsync(key, SentinelField, SentinelValue);
-                await redis.KeyExpireAsync(key, CacheTtl);
-
-                return;
-            }
-
-            var entries = new HashEntry[count];
-            var idx = 0;
-            for (var i = 0; i < hotbar.Length; i++)
-            {
-                if (hotbar[i].IsEmpty)
-                {
-                    continue;
-                }
-
-                entries[idx++] = new HashEntry(SlotNames[i], $"{hotbar[i].ItemId}:{hotbar[i].Count}");
-            }
-
-            await redis.HashSetAsync(key, entries);
             await redis.KeyExpireAsync(key, CacheTtl);
         }
 
@@ -125,33 +75,52 @@ namespace FunCraft.Data.Inventory
         {
             slot = default;
             var str = (string?)value;
-
-            if (str is null)
-            {
-                return false;
-            }
+            if (str is null) return false;
 
             var sep = str.IndexOf(':');
-            if (sep < 1)
-            {
-                return false;
-            }
-
-            if (!int.TryParse(str.AsSpan(0, sep), out var itemId))
-            {
-                return false;
-            }
-
-            if (!int.TryParse(str.AsSpan(sep + 1), out var count))
-            {
-                return false;
-            }
+            if (sep < 1) return false;
+            if (!int.TryParse(str.AsSpan(0, sep), out var itemId)) return false;
+            if (!int.TryParse(str.AsSpan(sep + 1), out var count)) return false;
 
             slot = new HotbarSlot(itemId, count);
-
             return true;
         }
 
-        private static RedisKey Key(Guid uuid) => $"hotbar:{uuid:N}";
+        private static RedisKey Key(Guid uuid) => $"inv:{uuid:N}";
+
+        public async ValueTask<HotbarSlot> GetItem(Guid uuid, Memory<HotbarSlot> inventory, int slot, CancellationToken ct = default)
+        {
+            var key = Key(uuid);
+            var entries = await redis.HashGetAllAsync(key);
+
+            switch (entries.Length)
+            {
+                case 0:
+                case 1 when (string?)entries[0].Name == SentinelField:
+                    return default;
+
+                default:
+                    foreach (var e in entries)
+                    {
+                        var name = (string?)e.Name;
+                        if (name is null or SentinelField)
+                        {
+                            continue;
+                        }
+
+                        if (!int.TryParse(name, out var itemSlot) || (uint)itemSlot >= HotbarSlot.InventorySize)
+                        {
+                            continue;
+                        }
+
+                        if (itemSlot == slot && TryParseSlotValue(e.Value, out var hs))
+                        {
+                            return hs;
+                        }
+                    }
+
+                    return default;
+            }
+        }
     }
 }

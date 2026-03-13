@@ -1,46 +1,34 @@
 ﻿using Npgsql;
-using System.Text.RegularExpressions;
 
 namespace FunCraft.Data.Inventory
 {
     /// <summary>
-    /// Persists hotbar slots (0–8) to the <c>inventory</c> table.
-    /// item_data JSONB format: <c>{"id":28,"count":7}</c>
+    /// Persists all 46 window-0 inventory slots to the <c>inventory</c> table.
+    /// Schema: (uuid, slot SMALLINT, item_id INT, item_count SMALLINT).
     /// </summary>
-    public sealed partial class PostgresInventoryRepository(NpgsqlDataSource db) : IInventoryRepository
+    public sealed class PostgresInventoryRepository(NpgsqlDataSource db) : IInventoryRepository
     {
-        [GeneratedRegex("""^\{"id":(\d+),"count":(\d+)\}$""")]
-        private static partial Regex ItemDataRegex();
-
-        public async Task<HotbarSlot[]?> GetHotbarAsync(Guid uuid, CancellationToken ct = default)
+        public async ValueTask<bool> TryGetInventoryAsync(
+            Guid uuid, Memory<HotbarSlot> destination, CancellationToken ct = default)
         {
             await using var cmd = db.CreateCommand(
                 """
-                SELECT slot, item_data
+                SELECT slot, item_id, item_count
                 FROM   inventory
                 WHERE  uuid = $1
-                  AND  slot BETWEEN 0 AND 8
+                  AND  slot BETWEEN 0 AND 45
                 ORDER  BY slot
                 """);
             cmd.Parameters.AddWithValue(uuid);
 
             await using var reader = await cmd.ExecuteReaderAsync(ct);
 
-            HotbarSlot[]? hotbar = null;
+            var found = false;
+
             while (await reader.ReadAsync(ct))
             {
-                hotbar ??= new HotbarSlot[9];
                 var slot = reader.GetInt16(0);
-                var json = reader.GetString(1);
-                var m = ItemDataRegex().Match(json);
-                if (m.Success)
-                {
-                    hotbar[slot] = new HotbarSlot(ItemId: int.Parse(m.Groups[1].ValueSpan), Count: int.Parse(m.Groups[2].ValueSpan));
-                }
-                if ((uint) slot >= HotbarSlot.InventorySize)
-                {
-                    continue;
-                }
+                if ((uint)slot >= HotbarSlot.InventorySize) continue;
 
                 destination.Span[slot] = new HotbarSlot(
                     ItemId: reader.GetInt32(1),
@@ -48,14 +36,35 @@ namespace FunCraft.Data.Inventory
                 found = true;
             }
 
-            return hotbar;
-        }
-
-        public async Task SaveHotbarAsync(Guid uuid, HotbarSlot[] hotbar, CancellationToken ct = default)
             return found;
         }
 
-        public async ValueTask SaveInventoryAsync(Guid uuid, ReadOnlyMemory<HotbarSlot> inventory, CancellationToken ct = default)
+        public async ValueTask<HotbarSlot> GetItem(Guid uuid, Memory<HotbarSlot> inventory,
+            int slot, CancellationToken ct = default)
+        {
+            await using var cmd = db.CreateCommand(
+                """
+                SELECT item_id, item_count
+                FROM   inventory
+                WHERE  uuid = $1, slot = $2
+                  AND  slot BETWEEN 0 AND 45
+                ORDER  BY slot
+                """);
+            cmd.Parameters.AddWithValue(uuid);
+            cmd.Parameters.AddWithValue(slot);
+
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+
+            if (await reader.ReadAsync(ct))
+            {
+                return new HotbarSlot(reader.GetInt16(0), reader.GetInt16(1));
+            }
+
+            return default;
+        }
+
+        public async ValueTask SaveInventoryAsync(
+            Guid uuid, ReadOnlyMemory<HotbarSlot> inventory, CancellationToken ct = default)
         {
             await using var conn = await db.OpenConnectionAsync(ct);
             await using var tr = await conn.BeginTransactionAsync(ct);
@@ -67,31 +76,31 @@ namespace FunCraft.Data.Inventory
                     """
                     DELETE FROM inventory
                     WHERE uuid = $1
-                      AND slot BETWEEN 0 AND 8
+                      AND slot BETWEEN 0 AND 45
                     """;
                 del.Parameters.AddWithValue(uuid);
                 await del.ExecuteNonQueryAsync(ct);
             }
 
-            for (var i = 0; i < hotbar.Length; i++)
+            for (var i = 0; i < inventory.Length; i++)
             {
-                if (hotbar[i].IsEmpty)
+                var s = inventory.Span[i];
+                if (s.IsEmpty)
                 {
                     continue;
                 }
-
-                var json = $$$"""{"id":{{{hotbar[i].ItemId}}},"count":{{{hotbar[i].Count}}}}""";
 
                 await using var ins = conn.CreateCommand();
                 ins.Transaction = tr;
                 ins.CommandText =
                     """
-                    INSERT INTO inventory (uuid, slot, item_data)
-                    VALUES ($1, $2, $3::jsonb)
+                    INSERT INTO inventory (uuid, slot, item_id, item_count)
+                    VALUES ($1, $2, $3, $4)
                     """;
                 ins.Parameters.AddWithValue(uuid);
                 ins.Parameters.AddWithValue((short)i);
-                ins.Parameters.AddWithValue(json);
+                ins.Parameters.AddWithValue(s.ItemId);
+                ins.Parameters.AddWithValue((short)s.Count);
                 await ins.ExecuteNonQueryAsync(ct);
             }
 

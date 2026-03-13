@@ -5,7 +5,9 @@
     using Players;
     using Protocol.Packets.Play.Outgoing;
 
-    /// <summary>/test — puts 64× dirt in hotbar slot 0 and tracks it server-side.</summary>
+    /// <summary>
+    /// /test — puts 64× dirt in hotbar slot 0 and tracks it server-side.
+    /// </summary>
     public sealed class TestCommand(PlayerContext ctx) : ICommand
     {
         public string Name => "test";
@@ -18,8 +20,8 @@
         public async Task ExecuteAsync(
             string[] args, Func<string, Task> respond, IPacketSender sender, CancellationToken ct)
         {
-            ctx.Hotbar[0] = new HotbarSlot(DirtItemId, StackSize);
-            
+            ctx.Inventory[HotbarSlot0] = new HotbarSlot(DirtItemId, StackSize);
+
             await sender.SendAsync(new SetContainerSlotPacket
             {
                 WindowId = 0,

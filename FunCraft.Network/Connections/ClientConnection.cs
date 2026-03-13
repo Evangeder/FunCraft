@@ -286,7 +286,7 @@ namespace FunCraft.Network.Connections
                         Yaw = _ctx.Yaw,
                         Pitch = _ctx.Pitch,
                     });
-                    await _inventory.SaveHotbarAsync(_ctx.Uuid, _ctx.Hotbar);
+                    await _inventory.SaveInventoryAsync(_ctx.Uuid, _ctx.Inventory.AsMemory());
                     await _sessions.EndAsync(_ctx.Uuid, DateTimeOffset.UtcNow);
                 }
                 catch (Exception ex)

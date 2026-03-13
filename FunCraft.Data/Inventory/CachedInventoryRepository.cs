@@ -14,7 +14,7 @@ namespace FunCraft.Data.Inventory
         private const string SentinelValue = "1";
 
         public async ValueTask<bool> TryGetInventoryAsync(
-            Guid uuid, Memory<HotbarSlot> destination, CancellationToken ct = default)
+            Guid uuid, Memory<InventorySlot> destination, CancellationToken ct = default)
         {
             var key = Key(uuid);
             var entries = await redis.HashGetAllAsync(key);
@@ -29,7 +29,7 @@ namespace FunCraft.Data.Inventory
                 {
                     var name = (string?)e.Name;
                     if (name is null or SentinelField) continue;
-                    if (!int.TryParse(name, out var slot) || (uint)slot >= HotbarSlot.InventorySize) continue;
+                    if (!int.TryParse(name, out var slot) || (uint)slot >= InventorySlot.InventorySize) continue;
                     if (TryParseSlotValue(e.Value, out var hs))
                         span[slot] = hs;
                 }
@@ -43,7 +43,7 @@ namespace FunCraft.Data.Inventory
         }
 
         public async ValueTask SaveInventoryAsync(
-            Guid uuid, ReadOnlyMemory<HotbarSlot> inventory, CancellationToken ct = default)
+            Guid uuid, ReadOnlyMemory<InventorySlot> inventory, CancellationToken ct = default)
         {
             await db.SaveInventoryAsync(uuid, inventory, ct);
 
@@ -52,10 +52,10 @@ namespace FunCraft.Data.Inventory
             await PopulateCacheAsync(key, inventory);
         }
 
-        private async Task PopulateCacheAsync(RedisKey key, ReadOnlyMemory<HotbarSlot> inv)
+        private async Task PopulateCacheAsync(RedisKey key, ReadOnlyMemory<InventorySlot> inv)
         {
             var span = inv.Span;
-            var entries = new List<HashEntry>(HotbarSlot.InventorySize);
+            var entries = new List<HashEntry>(InventorySlot.InventorySize);
 
             for (var i = 0; i < span.Length; i++)
             {
@@ -71,7 +71,7 @@ namespace FunCraft.Data.Inventory
             await redis.KeyExpireAsync(key, CacheTtl);
         }
 
-        private static bool TryParseSlotValue(RedisValue value, out HotbarSlot slot)
+        private static bool TryParseSlotValue(RedisValue value, out InventorySlot slot)
         {
             slot = default;
             var str = (string?)value;
@@ -82,13 +82,13 @@ namespace FunCraft.Data.Inventory
             if (!int.TryParse(str.AsSpan(0, sep), out var itemId)) return false;
             if (!int.TryParse(str.AsSpan(sep + 1), out var count)) return false;
 
-            slot = new HotbarSlot(itemId, count);
+            slot = new InventorySlot(itemId, count);
             return true;
         }
 
         private static RedisKey Key(Guid uuid) => $"inv:{uuid:N}";
 
-        public async ValueTask<HotbarSlot> GetItem(Guid uuid, Memory<HotbarSlot> inventory, int slot, CancellationToken ct = default)
+        public async ValueTask<InventorySlot> GetItem(Guid uuid, Memory<InventorySlot> inventory, int slot, CancellationToken ct = default)
         {
             var key = Key(uuid);
             var entries = await redis.HashGetAllAsync(key);
@@ -108,7 +108,7 @@ namespace FunCraft.Data.Inventory
                             continue;
                         }
 
-                        if (!int.TryParse(name, out var itemSlot) || (uint)itemSlot >= HotbarSlot.InventorySize)
+                        if (!int.TryParse(name, out var itemSlot) || (uint)itemSlot >= InventorySlot.InventorySize)
                         {
                             continue;
                         }

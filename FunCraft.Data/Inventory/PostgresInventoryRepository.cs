@@ -9,7 +9,7 @@ namespace FunCraft.Data.Inventory
     public sealed class PostgresInventoryRepository(NpgsqlDataSource db) : IInventoryRepository
     {
         public async ValueTask<bool> TryGetInventoryAsync(
-            Guid uuid, Memory<HotbarSlot> destination, CancellationToken ct = default)
+            Guid uuid, Memory<InventorySlot> destination, CancellationToken ct = default)
         {
             await using var cmd = db.CreateCommand(
                 """
@@ -28,9 +28,9 @@ namespace FunCraft.Data.Inventory
             while (await reader.ReadAsync(ct))
             {
                 var slot = reader.GetInt16(0);
-                if ((uint)slot >= HotbarSlot.InventorySize) continue;
+                if ((uint)slot >= InventorySlot.InventorySize) continue;
 
-                destination.Span[slot] = new HotbarSlot(
+                destination.Span[slot] = new InventorySlot(
                     ItemId: reader.GetInt32(1),
                     Count: reader.GetInt16(2));
                 found = true;
@@ -39,7 +39,7 @@ namespace FunCraft.Data.Inventory
             return found;
         }
 
-        public async ValueTask<HotbarSlot> GetItem(Guid uuid, Memory<HotbarSlot> inventory,
+        public async ValueTask<InventorySlot> GetItem(Guid uuid, Memory<InventorySlot> inventory,
             int slot, CancellationToken ct = default)
         {
             await using var cmd = db.CreateCommand(
@@ -57,14 +57,14 @@ namespace FunCraft.Data.Inventory
 
             if (await reader.ReadAsync(ct))
             {
-                return new HotbarSlot(reader.GetInt16(0), reader.GetInt16(1));
+                return new InventorySlot(reader.GetInt16(0), reader.GetInt16(1));
             }
 
             return default;
         }
 
         public async ValueTask SaveInventoryAsync(
-            Guid uuid, ReadOnlyMemory<HotbarSlot> inventory, CancellationToken ct = default)
+            Guid uuid, ReadOnlyMemory<InventorySlot> inventory, CancellationToken ct = default)
         {
             await using var conn = await db.OpenConnectionAsync(ct);
             await using var tr = await conn.BeginTransactionAsync(ct);

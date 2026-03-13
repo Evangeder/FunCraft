@@ -13,14 +13,14 @@
     /// </summary>
     /// <param name="ItemId">Protocol ID of the item (0 = empty).</param>
     /// <param name="Count">Stack size (1–99). Ignored when ItemId is 0.</param>
-    public readonly record struct HotbarSlot(int ItemId, int Count)
+    public readonly record struct InventorySlot(int ItemId, int Count)
     {
         /// <summary>
         /// Total number of window-0 slots tracked server-side.
         /// </summary>
         public const int InventorySize = 46;
 
-        public static readonly HotbarSlot Empty = default;
+        public static readonly InventorySlot Empty = default;
         public bool IsEmpty => ItemId == 0;
     }
 }

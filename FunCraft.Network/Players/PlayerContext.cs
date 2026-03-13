@@ -27,13 +27,13 @@ namespace FunCraft.Network.Players
         ///   36–44    hotbar (HeldSlot 0–8)
         ///   45       off-hand
         /// </summary>
-        public HotbarSlot[] Inventory { get; } = new HotbarSlot[HotbarSlot.InventorySize];
+        public InventorySlot[] Inventory { get; } = new InventorySlot[InventorySlot.InventorySize];
 
         /// <summary>Convenience: the item currently held in-hand.</summary>
-        public ref HotbarSlot HeldItem => ref Inventory[36 + HeldSlot];
+        public ref InventorySlot HeldItem => ref Inventory[36 + HeldSlot];
 
         /// <summary>GetItemId attached to the player's cursor during inventory interactions.</summary>
-        public HotbarSlot CursorItem { get; set; } = HotbarSlot.Empty;
+        public InventorySlot CursorItem { get; set; } = InventorySlot.Empty;
 
         // ── Drag / paint state (mode 5) ──────────────────────────────────────────
         // -1 = not dragging; 0 = left-drag (distribute evenly); 1 = right-drag (place one each)

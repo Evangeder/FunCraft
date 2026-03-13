@@ -23,7 +23,7 @@ namespace FunCraft.Network.Commands
             string[] args, Func<string, Task> respond, IPacketSender sender, CancellationToken ct)
         {
             var itemId = RegistryLookup.GetItemId("minecraft:oak_log"u8);
-            ctx.Inventory[HotbarSlot0] = new HotbarSlot(itemId, StackSize);
+            ctx.Inventory[HotbarSlot0] = new InventorySlot(itemId, StackSize);
 
             await sender.SendAsync(new SetContainerSlotPacket
             {

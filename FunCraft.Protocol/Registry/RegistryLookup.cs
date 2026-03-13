@@ -1,12 +1,5 @@
 ﻿namespace FunCraft.Protocol.Registry
 {
-    using Properties;
-
-    /// <summary>
-    /// <br/>Resolves registry entry names to their numeric protocol IDs by parsing
-    /// registries.bin directly — no dependency on RegistryPacketLoader.
-    /// <br/>Entry protocol ID == 0-based index in the sorted-by-protocol_id list.
-    /// </summary>
     public static class RegistryLookup
     {
 #pragma warning disable CS8618

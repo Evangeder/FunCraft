@@ -121,22 +121,22 @@ namespace FunCraft.Network.Handlers
             _localCommands.Register(new RespawnCommand(ctx));
 
             // Rent a buffer, fill from DB, copy into ctx, return immediately.
-            var rentedInv = ArrayPool<HotbarSlot>.Shared.Rent(HotbarSlot.InventorySize);
+            var rentedInv = ArrayPool<InventorySlot>.Shared.Rent(InventorySlot.InventorySize);
             try
             {
-                rentedInv.AsSpan(0, HotbarSlot.InventorySize).Clear();
-                var hadSaved = await inventory.TryGetInventoryAsync(ctx.Uuid, rentedInv.AsMemory(0, HotbarSlot.InventorySize), ct);
+                rentedInv.AsSpan(0, InventorySlot.InventorySize).Clear();
+                var hadSaved = await inventory.TryGetInventoryAsync(ctx.Uuid, rentedInv.AsMemory(0, InventorySlot.InventorySize), ct);
                 if (hadSaved)
-                    rentedInv.AsSpan(0, HotbarSlot.InventorySize).CopyTo(ctx.Inventory);
+                    rentedInv.AsSpan(0, InventorySlot.InventorySize).CopyTo(ctx.Inventory);
             }
             finally
             {
-                ArrayPool<HotbarSlot>.Shared.Return(rentedInv);
+                ArrayPool<InventorySlot>.Shared.Return(rentedInv);
             }
 
             // Send the full 46-slot window to the client so it mirrors our server state.
-            var slots = new (int ItemId, int Count)[HotbarSlot.InventorySize];
-            for (var i = 0; i < HotbarSlot.InventorySize; i++)
+            var slots = new (int ItemId, int Count)[InventorySlot.InventorySize];
+            for (var i = 0; i < InventorySlot.InventorySize; i++)
                 slots[i] = (ctx.Inventory[i].ItemId, ctx.Inventory[i].Count);
 
             await Sender.SendAsync(new SetContainerContentPacket
@@ -471,7 +471,7 @@ namespace FunCraft.Network.Handlers
 
             void Sweep(bool fullStacksOnly)
             {
-                for (var i = 0; i < HotbarSlot.InventorySize && ctx.CursorItem.Count < max; i++)
+                for (var i = 0; i < InventorySlot.InventorySize && ctx.CursorItem.Count < max; i++)
                 {
                     ref var inv = ref ctx.Inventory[i];
                     if (inv.IsEmpty || inv.ItemId != ctx.CursorItem.ItemId) continue;
@@ -479,9 +479,9 @@ namespace FunCraft.Network.Handlers
                     if (!fullStacksOnly && inv.Count >= max) continue;
 
                     var take = Math.Min(max - ctx.CursorItem.Count, inv.Count);
-                    ctx.CursorItem = new HotbarSlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count + take);
+                    ctx.CursorItem = new InventorySlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count + take);
                     var left = inv.Count - take;
-                    inv = left > 0 ? new HotbarSlot(inv.ItemId, left) : HotbarSlot.Empty;
+                    inv = left > 0 ? new InventorySlot(inv.ItemId, left) : InventorySlot.Empty;
                 }
             }
         }
@@ -489,8 +489,8 @@ namespace FunCraft.Network.Handlers
 
         private ValueTask SendInventorySync(CancellationToken ct)
         {
-            var slots = new (int ItemId, int Count)[HotbarSlot.InventorySize];
-            for (var i = 0; i < HotbarSlot.InventorySize; i++)
+            var slots = new (int ItemId, int Count)[InventorySlot.InventorySize];
+            for (var i = 0; i < InventorySlot.InventorySize; i++)
                 slots[i] = (ctx.Inventory[i].ItemId, ctx.Inventory[i].Count);
 
             return Sender.SendAsync(new SetContainerContentPacket
@@ -515,12 +515,12 @@ namespace FunCraft.Network.Handlers
             {
                 if (!ctx.Inventory[i].IsEmpty) continue;
                 ctx.Inventory[i] = ctx.CursorItem;
-                ctx.CursorItem = HotbarSlot.Empty;
+                ctx.CursorItem = InventorySlot.Empty;
                 return;
             }
 
             // No free slot — item is lost for now (TODO: drop on ground).
-            ctx.CursorItem = HotbarSlot.Empty;
+            ctx.CursorItem = InventorySlot.Empty;
         }
 
 
@@ -529,15 +529,15 @@ namespace FunCraft.Network.Handlers
             if (slot < 0)
             {
                 if (button == 0)
-                    ctx.CursorItem = HotbarSlot.Empty;
+                    ctx.CursorItem = InventorySlot.Empty;
                 else if (!ctx.CursorItem.IsEmpty)
                     ctx.CursorItem = ctx.CursorItem.Count > 1
-                        ? new HotbarSlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count - 1)
-                        : HotbarSlot.Empty;
+                        ? new InventorySlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count - 1)
+                        : InventorySlot.Empty;
                 return;
             }
 
-            if (slot >= HotbarSlot.InventorySize) return;
+            if (slot >= InventorySlot.InventorySize) return;
             ref var inv = ref ctx.Inventory[slot];
 
             if (button == 0)
@@ -545,21 +545,21 @@ namespace FunCraft.Network.Handlers
                 if (ctx.CursorItem.IsEmpty)
                 {
                     ctx.CursorItem = inv;
-                    inv = HotbarSlot.Empty;
+                    inv = InventorySlot.Empty;
                 }
                 else if (inv.IsEmpty)
                 {
                     inv = ctx.CursorItem;
-                    ctx.CursorItem = HotbarSlot.Empty;
+                    ctx.CursorItem = InventorySlot.Empty;
                 }
                 else if (ctx.CursorItem.ItemId == inv.ItemId)
                 {
                     var total = ctx.CursorItem.Count + inv.Count;
                     const int max = 64;
-                    inv = new HotbarSlot(inv.ItemId, Math.Min(total, max));
+                    inv = new InventorySlot(inv.ItemId, Math.Min(total, max));
                     ctx.CursorItem = total > max
-                        ? new HotbarSlot(ctx.CursorItem.ItemId, total - max)
-                        : HotbarSlot.Empty;
+                        ? new InventorySlot(ctx.CursorItem.ItemId, total - max)
+                        : InventorySlot.Empty;
                 }
                 else
                 {
@@ -572,24 +572,24 @@ namespace FunCraft.Network.Handlers
                 {
                     var take = (inv.Count + 1) / 2;
                     var leave = inv.Count - take;
-                    ctx.CursorItem = new HotbarSlot(inv.ItemId, take);
-                    inv = leave > 0 ? new HotbarSlot(inv.ItemId, leave) : HotbarSlot.Empty;
+                    ctx.CursorItem = new InventorySlot(inv.ItemId, take);
+                    inv = leave > 0 ? new InventorySlot(inv.ItemId, leave) : InventorySlot.Empty;
                 }
                 else if (!ctx.CursorItem.IsEmpty && inv.IsEmpty)
                 {
-                    inv = new HotbarSlot(ctx.CursorItem.ItemId, 1);
+                    inv = new InventorySlot(ctx.CursorItem.ItemId, 1);
                     ctx.CursorItem = ctx.CursorItem.Count > 1
-                        ? new HotbarSlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count - 1)
-                        : HotbarSlot.Empty;
+                        ? new InventorySlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count - 1)
+                        : InventorySlot.Empty;
                 }
                 else if (!ctx.CursorItem.IsEmpty && ctx.CursorItem.ItemId == inv.ItemId)
                 {
                     if (inv.Count < 64)
                     {
-                        inv = new HotbarSlot(inv.ItemId, inv.Count + 1);
+                        inv = new InventorySlot(inv.ItemId, inv.Count + 1);
                         ctx.CursorItem = ctx.CursorItem.Count > 1
-                            ? new HotbarSlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count - 1)
-                            : HotbarSlot.Empty;
+                            ? new InventorySlot(ctx.CursorItem.ItemId, ctx.CursorItem.Count - 1)
+                            : InventorySlot.Empty;
                     }
                 }
                 else if (!ctx.CursorItem.IsEmpty && !inv.IsEmpty)
@@ -601,7 +601,7 @@ namespace FunCraft.Network.Handlers
 
         private void ApplyShiftClick(short slot)
         {
-            if (slot < 0 || slot >= HotbarSlot.InventorySize) return;
+            if (slot < 0 || slot >= InventorySlot.InventorySize) return;
             ref var src = ref ctx.Inventory[slot];
             if (src.IsEmpty) return;
 
@@ -618,9 +618,9 @@ namespace FunCraft.Network.Handlers
                 if (!dest.IsEmpty && dest.ItemId == src.ItemId && dest.Count < 64)
                 {
                     var transfer = Math.Min(64 - dest.Count, src.Count);
-                    dest = new HotbarSlot(dest.ItemId, dest.Count + transfer);
+                    dest = new InventorySlot(dest.ItemId, dest.Count + transfer);
                     var remaining = src.Count - transfer;
-                    src = remaining > 0 ? new HotbarSlot(src.ItemId, remaining) : HotbarSlot.Empty;
+                    src = remaining > 0 ? new InventorySlot(src.ItemId, remaining) : InventorySlot.Empty;
                 }
             }
 
@@ -630,14 +630,14 @@ namespace FunCraft.Network.Handlers
                 if (dest.IsEmpty)
                 {
                     dest = src;
-                    src = HotbarSlot.Empty;
+                    src = InventorySlot.Empty;
                 }
             }
         }
 
         private void ApplyHotbarSwap(short slot, byte button)
         {
-            if (slot < 0 || slot >= HotbarSlot.InventorySize) return;
+            if (slot < 0 || slot >= InventorySlot.InventorySize) return;
             if (button > 8) return;
             var hotbarSlot = 36 + button;
             (ctx.Inventory[slot], ctx.Inventory[hotbarSlot]) = (ctx.Inventory[hotbarSlot], ctx.Inventory[slot]);
@@ -665,7 +665,7 @@ namespace FunCraft.Network.Handlers
                 case 1: // add slot to left-drag
                 case 5: // add slot to right-drag
                     if (ctx.DragButton < 0) return;
-                    if (slot >= 0 && slot < HotbarSlot.InventorySize)
+                    if (slot >= 0 && slot < InventorySlot.InventorySize)
                         ctx.DragSlots.Add(slot);
                     break;
 
@@ -691,13 +691,13 @@ namespace FunCraft.Network.Handlers
                             var current = inv.IsEmpty ? 0 : inv.Count;
                             var canAdd = Math.Min(64 - current, perSlot);
                             if (canAdd <= 0) continue;
-                            inv = new HotbarSlot(ctx.CursorItem.ItemId, current + canAdd);
+                            inv = new InventorySlot(ctx.CursorItem.ItemId, current + canAdd);
                             remaining -= canAdd;
                         }
 
                         ctx.CursorItem = remaining > 0
-                            ? new HotbarSlot(ctx.CursorItem.ItemId, remaining)
-                            : HotbarSlot.Empty;
+                            ? new InventorySlot(ctx.CursorItem.ItemId, remaining)
+                            : InventorySlot.Empty;
 
                         ctx.DragButton = -1;
                         ctx.DragSlots.Clear();
@@ -717,13 +717,13 @@ namespace FunCraft.Network.Handlers
                             if (!inv.IsEmpty && inv.Count >= 64) continue;
 
                             var current = inv.IsEmpty ? 0 : inv.Count;
-                            inv = new HotbarSlot(ctx.CursorItem.ItemId, current + 1);
+                            inv = new InventorySlot(ctx.CursorItem.ItemId, current + 1);
                             remaining--;
                         }
 
                         ctx.CursorItem = remaining > 0
-                            ? new HotbarSlot(ctx.CursorItem.ItemId, remaining)
-                            : HotbarSlot.Empty;
+                            ? new InventorySlot(ctx.CursorItem.ItemId, remaining)
+                            : InventorySlot.Empty;
 
                         ctx.DragButton = -1;
                         ctx.DragSlots.Clear();
@@ -788,7 +788,7 @@ namespace FunCraft.Network.Handlers
             var column = world.GetChunk((int)Math.Floor((double)placePos.X / 16), (int)Math.Floor((double)placePos.Z / 16));
             column.SetBlock(placePos.X, placePos.Y, placePos.Z, new BlockState(blockStateId));
 
-            ctx.HeldItem = ctx.HeldItem.Count > 1 ? new HotbarSlot(ctx.HeldItem.ItemId, ctx.HeldItem.Count - 1) : HotbarSlot.Empty;
+            ctx.HeldItem = ctx.HeldItem.Count > 1 ? new InventorySlot(ctx.HeldItem.ItemId, ctx.HeldItem.Count - 1) : InventorySlot.Empty;
 
             await registry.BroadcastRawAsync(new BlockUpdatePacket
             {

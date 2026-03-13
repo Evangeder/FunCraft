@@ -9,6 +9,7 @@ namespace FunCraft.Server
     using Network.Commands;
     using Network.Players;
     using Network.Server;
+    using Protocol.Properties;
     using Protocol.Registry;
     using World;
     using WorldGen;
@@ -34,7 +35,14 @@ namespace FunCraft.Server
 
                     services.AddSingleton<IWorldSource, FlatWorldGenerator>();
                     services.AddSingleton<IPlayerRegistry, PlayerRegistry>();
-                    services.AddSingleton(sp => new CommandDispatcher());
+
+                    // Build the command dispatcher with all commands registered.
+                    services.AddSingleton(sp =>
+                    {
+                        var dispatcher = new CommandDispatcher();
+                        dispatcher.Register(new HelpCommand(dispatcher));
+                        return dispatcher;
+                    });
 
                     services.AddHostedService<MinecraftServer>();
                 })
@@ -50,6 +58,7 @@ namespace FunCraft.Server
                 .MigrateAsync();
 
             RegistryLoader.Load();
+            RegistryLookup.LoadBlocks(Resources.blocks.AsSpan());
             await host.RunAsync();
         }
     }

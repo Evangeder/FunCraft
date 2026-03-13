@@ -60,10 +60,7 @@ namespace FunCraft.Protocol.Packets.Play.Incoming
                 return false;
             }
 
-            if (reader.Remaining < 14)
-            {
-                return false; // 3x float + bool + bool
-            }
+            if (reader.Remaining < 14) return false; // 3×float + bool + bool
 
             Span<byte> floatBuf = stackalloc byte[4];
 
@@ -80,13 +77,15 @@ namespace FunCraft.Protocol.Packets.Play.Incoming
             {
                 return false;
             }
-
             if (!reader.TryRead(out _))
             {
                 return false; // world border hit — unused
             }
 
-            if (!VarInt.TryRead(ref reader, out var sequence)) return false;
+            if (!VarInt.TryRead(ref reader, out var sequence))
+            {
+                return false;
+            }
 
             Hand = hand;
             Location = BlockPosition.Decode(encodedPos);
@@ -96,6 +95,7 @@ namespace FunCraft.Protocol.Packets.Play.Incoming
             CursorZ = cursorZ;
             InsideBlock = insideBlock != 0;
             Sequence = sequence;
+
             return true;
         }
     }

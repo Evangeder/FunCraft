@@ -1,4 +1,5 @@
 ﻿using System.Buffers;
+using FunCraft.Protocol.Registry;
 using Microsoft.Extensions.Logging;
 
 namespace FunCraft.Network.Handlers
@@ -303,7 +304,7 @@ namespace FunCraft.Network.Handlers
                     await Sender.SendAsync(new UnloadChunkPacket { ChunkX = x, ChunkZ = z }, ct);
                     _loadedChunks.Remove((x, z));
                 }
-                
+
                 if (toLoad.Count > 0)
                 {
                     await Sender.SendAsync(new ChunkBatchStartPacket(), ct);
@@ -407,18 +408,25 @@ namespace FunCraft.Network.Handlers
             }
         }
 
+        // TODO creative mode when game-mode tracking is added.
         private async ValueTask HandlePlayerActionAsync(ReadOnlySequence<byte> payload, CancellationToken ct)
         {
             var reader = new SequenceReader<byte>(payload);
             var packet = new PlayerActionPacket();
-            if (!packet.TryRead(ref reader)) return;
 
-            // Only break on FinishedDigging.
-            // Creative mode sends only StartedDigging — TODO when game-mode tracking is added.
-            if (packet.Status is PlayerActionPacket.ActionStatus.FinishedDigging)
+            if (!packet.TryRead(ref reader))
             {
-                var pos = packet.Location;
-                var column = world.GetChunk(WorldToChunk(pos.X), WorldToChunk(pos.Z));
+                return;
+            }
+
+            var pos = packet.Location;
+            var column = world.GetChunk(WorldToChunk(pos.X), WorldToChunk(pos.Z));
+            var block = column.GetBlock(pos.X, pos.Y, pos.Z);
+            var hardness = RegistryLookup.GetHardness(block);
+
+            if (packet.Status is PlayerActionPacket.ActionStatus.FinishedDigging
+                || (packet.Status is PlayerActionPacket.ActionStatus.StartedDigging && hardness == 0))
+            {
                 column.SetBlock(pos.X, pos.Y, pos.Z, WellKnownBlocks.Air);
 
                 var update = new BlockUpdatePacket
@@ -431,13 +439,6 @@ namespace FunCraft.Network.Handlers
 
             await Sender.SendAsync(new AcknowledgeBlockChangePacket { SequenceId = packet.Sequence }, ct);
         }
-
-        // item protocol_id  ->  default block state ID
-        // Extend this table as more items are added.
-        private static readonly Dictionary<int, ushort> ItemToBlockState = new()
-        {
-            [28] = 10,  // minecraft:dirt  item 28 -> block state 10
-        };
 
         // Face index -> (dx, dy, dz) offset applied to the clicked block position.
         private static readonly (int dx, int dy, int dz)[] FaceOffsets =
@@ -823,53 +824,53 @@ namespace FunCraft.Network.Handlers
                     }
 
                 case 6: // commit right-drag — place one item in each targeted slot
-                {
-                    if (ctx.DragButton != 1 || ctx.DragSlots.Count == 0 || ctx.CursorItem.IsEmpty)
                     {
+                        if (ctx.DragButton != 1 || ctx.DragSlots.Count == 0 || ctx.CursorItem.IsEmpty)
+                        {
+                            break;
+                        }
+
+                        Span<int> slots = stackalloc int[ctx.DragSlots.Count];
+                        var slotCount = 0;
+
+                        foreach (var s in ctx.DragSlots)
+                        {
+                            slots[slotCount++] = s;
+                        }
+
+                        slots = slots[..slotCount];
+                        slots.Sort();
+
+                        var remaining = ctx.CursorItem.Count;
+
+                        for (var i = 0; i < slots.Length && remaining > 0; i++)
+                        {
+                            var s = slots[i];
+                            ref var inv = ref ctx.Inventory[s];
+
+                            if (!inv.IsEmpty && inv.ItemId != ctx.CursorItem.ItemId)
+                            {
+                                continue;
+                            }
+
+                            if (inv is { IsEmpty: false, Count: >= 64 })
+                            {
+                                continue;
+                            }
+
+                            var current = inv.IsEmpty ? 0 : inv.Count;
+                            inv = new InventorySlot(ctx.CursorItem.ItemId, current + 1);
+                            remaining--;
+                        }
+
+                        ctx.CursorItem = remaining > 0
+                            ? new InventorySlot(ctx.CursorItem.ItemId, remaining)
+                            : InventorySlot.Empty;
+
+                        ctx.DragButton = -1;
+                        ctx.DragSlots.Clear();
                         break;
                     }
-
-                    Span<int> slots = stackalloc int[ctx.DragSlots.Count];
-                    var slotCount = 0;
-
-                    foreach (var s in ctx.DragSlots)
-                    {
-                        slots[slotCount++] = s;
-                    }
-
-                    slots = slots[..slotCount];
-                    slots.Sort();
-
-                    var remaining = ctx.CursorItem.Count;
-
-                    for (var i = 0; i < slots.Length && remaining > 0; i++)
-                    {
-                        var s = slots[i];
-                        ref var inv = ref ctx.Inventory[s];
-
-                        if (!inv.IsEmpty && inv.ItemId != ctx.CursorItem.ItemId)
-                        {
-                            continue;
-                        }
-
-                        if (inv is {IsEmpty: false, Count: >= 64})
-                        {
-                            continue;
-                        }
-
-                        var current = inv.IsEmpty ? 0 : inv.Count;
-                        inv = new InventorySlot(ctx.CursorItem.ItemId, current + 1);
-                        remaining--;
-                    }
-
-                    ctx.CursorItem = remaining > 0
-                        ? new InventorySlot(ctx.CursorItem.ItemId, remaining)
-                        : InventorySlot.Empty;
-
-                    ctx.DragButton = -1;
-                    ctx.DragSlots.Clear();
-                    break;
-                }
             }
         }
 
@@ -904,9 +905,10 @@ namespace FunCraft.Network.Handlers
                 return;
             }
 
-            if (!ItemToBlockState.TryGetValue(held.ItemId, out var blockStateId))
+            var blockStateId = BlockStatePlacer.Resolve(held.ItemId, packet.Face, ctx.Yaw, packet.CursorY);
+            if (blockStateId == 0)
             {
-                return;
+                return; // item does not place a block
             }
 
             if (packet.Face < 0 || packet.Face >= FaceOffsets.Length)

@@ -136,18 +136,108 @@ namespace FunCraft.RegistryBuilder
             Console.WriteLine($"\nWrote {ms.Length:N0} bytes → {outputPath}");
         }
 
+        /// <summary>
+        /// Writes a standalone blocks.bin containing every block state needed for
+        /// server-side placement lookups. Format:
+        /// <code>
+        ///   VarInt  stateCount
+        ///   for each state:
+        ///     String  key        e.g. "minecraft:oak_log[axis=x]"  (props sorted A-Z)
+        ///     VarInt  stateId    global palette ID
+        ///   VarInt  defaultCount
+        ///   for each default:
+        ///     String  blockName  e.g. "minecraft:oak_log"
+        ///     VarInt  stateId    default state global palette ID
+        /// </code>
+        /// </summary>
+        public void WriteBlocks(string outputPath)
+        {
+            Console.WriteLine($"Writing blocks.bin...");
+            var blocksPath = Path.Combine(generatedFolder, "reports", "blocks.json");
+            if (!File.Exists(blocksPath))
+            {
+                Console.WriteLine($"WARNING: blocks.json not found at {blocksPath}, skipping blocks.bin");
+                return;
+            }
+
+            using var doc = JsonDocument.Parse(File.ReadAllBytes(blocksPath));
+
+            var states = new List<(string Key, int StateId)>();
+            var defaults = new List<(string Name, int StateId)>();
+
+            foreach (var block in doc.RootElement.EnumerateObject())
+            {
+                if (!block.Value.TryGetProperty("states", out var statesEl)) continue;
+
+                int defaultId = -1;
+                bool foundDefault = false;
+
+                foreach (var state in statesEl.EnumerateArray())
+                {
+                    var stateId = state.GetProperty("id").GetInt32();
+
+                    if (!foundDefault && state.TryGetProperty("default", out var defProp) && defProp.GetBoolean())
+                    {
+                        defaultId = stateId;
+                        foundDefault = true;
+                    }
+
+                    if (state.TryGetProperty("properties", out var propsEl))
+                    {
+                        // Build "name[k=v,k=v]" with props sorted A-Z.
+                        var pairs = new List<(string K, string V)>();
+                        foreach (var prop in propsEl.EnumerateObject())
+                            pairs.Add((prop.Name, prop.Value.GetString()!));
+                        pairs.Sort((a, b) => string.Compare(a.K, b.K, StringComparison.Ordinal));
+
+                        var propStr = string.Join(",", pairs.Select(p => $"{p.K}={p.V}"));
+                        states.Add(($"{block.Name}[{propStr}]", stateId));
+                    }
+                    else
+                    {
+                        // Single-state block — the keyed entry equals the bare name.
+                        states.Add((block.Name, stateId));
+                    }
+                }
+
+                // Fall back to first state if none was marked default.
+                if (!foundDefault)
+                    defaultId = statesEl.EnumerateArray().First().GetProperty("id").GetInt32();
+
+                defaults.Add((block.Name, defaultId));
+            }
+
+            using var ms = new MemoryStream();
+            WriteVarInt(ms, states.Count);
+            foreach (var (key, id) in states)
+            {
+                WriteString(ms, key);
+                WriteVarInt(ms, id);
+            }
+            WriteVarInt(ms, defaults.Count);
+            foreach (var (name, id) in defaults)
+            {
+                WriteString(ms, name);
+                WriteVarInt(ms, id);
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+            File.WriteAllBytes(outputPath, ms.ToArray());
+            Console.WriteLine($"Wrote {ms.Length:N0} bytes → {outputPath}  ({states.Count} states, {defaults.Count} defaults)");
+        }
+
         private static void WriteVarInt(Stream s, int value)
         {
-            var uv = (uint) value;
+            var uv = (uint)value;
             while (true)
             {
                 if ((uv & ~0x7Fu) == 0)
                 {
-                    s.WriteByte((byte) uv);
+                    s.WriteByte((byte)uv);
                     return;
                 }
 
-                s.WriteByte((byte) ((uv & 0x7F) | 0x80));
+                s.WriteByte((byte)((uv & 0x7F) | 0x80));
                 uv >>= 7;
             }
         }

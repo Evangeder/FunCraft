@@ -39,6 +39,11 @@
             {
                 var bundler = new RegistryBundler(generatedFolder);
                 bundler.Write(outputPath);
+
+                var blocksPath = Path.Combine(Path.GetDirectoryName(outputPath)!, "blocks.bin");
+                Console.WriteLine();
+                bundler.WriteBlocks(blocksPath);
+
                 return 0;
             }
             catch (Exception ex)

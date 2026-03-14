@@ -52,7 +52,7 @@ namespace FunCraft.Network.Connections
         private ConnectionState _connectionState = ConnectionState.Handshaking;
 
         public ClientConnection(Socket socket, IWorldSource world, IPlayerRepository players, IInventoryRepository inventory,
-            ISessionStore sessions, IPlayerRegistry registry, CommandDispatcher commands, string serverName, string motd, int maxPlayers)
+            ISessionStore sessions, IPlayerRegistry registry, CommandDispatcher commands, string serverName, string[] motd, int maxPlayers)
         {
             _socket = socket;
             _players = players;

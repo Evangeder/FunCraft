@@ -1,0 +1,15 @@
+{
+  "Server": {
+    "Port": 25565,
+    "Name": "FunCraft",
+    "MaxPlayers": 666,
+    "Motd": [
+      "§6A §bFun§fC§c#§6raft §fServer",
+      "§2Custom-built in C# .NET 10",
+      "§1F§2u§3n§4C§5r§6a§7f§8t§9! §fC# Minecraft Server!",
+      "§fA §6FunC#raft§f Server",
+      "A message of the day i guess :)",
+      "Did someone say optimized?"
+    ]
+  }
+}

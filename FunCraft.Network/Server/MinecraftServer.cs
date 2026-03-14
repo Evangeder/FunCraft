@@ -20,7 +20,7 @@ namespace FunCraft.Network.Server
         private readonly int _port = int.Parse(config["Server:Port"] ?? "25565");
         private readonly string _serverName = config["Server:Name"] ?? "FunCraft";
         private readonly int _maxPlayers = int.Parse(config["Server:MaxPlayers"] ?? "20");
-        private readonly string _motd = BuildMotd(config);
+        private readonly string[] _motd = BuildMotd(config);
 
         protected override async Task ExecuteAsync(CancellationToken ct)
         {
@@ -55,7 +55,7 @@ namespace FunCraft.Network.Server
             await connection.RunAsync(ct);
         }
 
-        private static string BuildMotd(IConfiguration config)
+        private static string[] BuildMotd(IConfiguration config)
         {
             // GetChildren() is on IConfiguration directly — no Binder package needed.
             var lines = config.GetSection("Server:Motd")
@@ -64,9 +64,7 @@ namespace FunCraft.Network.Server
                               .Where(v => v.Length > 0)
                               .ToArray();
 
-            return lines.Length > 0
-                ? string.Join('\n', lines)
-                : config["Server:Motd"] ?? "A FunC#raft Server";
+            return lines.Length > 0 ? lines : ["A FunC#raft Server"];
         }
     }
 }

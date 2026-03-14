@@ -9,7 +9,7 @@ namespace FunCraft.Network.Handlers
     using Protocol.Packets.Status.Incoming;
     using Protocol.Packets.Status.Outgoing;
 
-    internal class StatusHandler(string motd, int maxPlayers, IPlayerRegistry registry) : AsyncHandlerBase
+    internal class StatusHandler(string[] motd, int maxPlayers, IPlayerRegistry registry) : AsyncHandlerBase
     {
         internal override async ValueTask<ConnectionState> HandleAsync(
             int packetId,
@@ -23,8 +23,8 @@ namespace FunCraft.Network.Handlers
                         var status = new ServerStatus(
                             new ServerVersion("1.21.10", 773),
                             new ServerPlayers(maxPlayers, registry.Count),
-                            new ServerDescription(motd)
-                        );
+                            new ServerDescription(motd[Random.Shared.Next(motd.Length)])
+                                );
 
                         await Sender.SendAsync(new StatusResponsePacket
                         {

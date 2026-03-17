@@ -27,7 +27,8 @@ namespace FunCraft.Network.Handlers
     }
 
     internal class PlayHandler(IWorldSource world, PlayerContext ctx, IPlayerRepository players,
-        IInventoryRepository inventory, IPlayerRegistry registry, CommandDispatcher commands) : AsyncHandlerBase
+        IInventoryRepository inventory, IPlayerRegistry registry, CommandDispatcher commands,
+        ReadOnlyMemory<byte> welcomeMessage) : AsyncHandlerBase
     {
         private const int ViewDistance = 2;
         private const int InitialEntityId = 1;
@@ -42,11 +43,6 @@ namespace FunCraft.Network.Handlers
         private const double DefaultSpawnZ = 0.5;
 
         private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(10);
-
-        private static readonly byte[] MsgWelcome =
-            "Hello, welcome to the FunC#raft server!"u8.ToArray();
-        private static readonly byte[] MsgInDev =
-            "This server is heavily in development."u8.ToArray();
 
         private readonly CommandDispatcher _localCommands = new();
 
@@ -161,8 +157,25 @@ namespace FunCraft.Network.Handlers
             {
                 Content = ConcatBytes("Player '\u00a7e"u8, ctx.Username.Span, "\u00a7f' joined the game."u8)
             }, ct);
-            await Sender.SendAsync(new SystemChatMessagePacket { Content = MsgWelcome }, ct);
-            await Sender.SendAsync(new SystemChatMessagePacket { Content = MsgInDev }, ct);
+
+            var remaining = welcomeMessage;
+            while (!remaining.IsEmpty)
+            {
+                var nl = remaining.Span.IndexOf((byte)'\n');
+                ReadOnlyMemory<byte> line;
+                if (nl < 0)
+                {
+                    line = remaining;
+                    remaining = default;
+                }
+                else
+                {
+                    line = remaining[..nl];
+                    remaining = remaining[(nl + 1)..];
+                }
+                if (!line.IsEmpty)
+                    await Sender.SendAsync(new SystemChatMessagePacket { Content = line }, ct);
+            }
         }
 
         internal override async ValueTask<ConnectionState> HandleAsync(

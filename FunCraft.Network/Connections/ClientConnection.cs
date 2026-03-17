@@ -7,11 +7,11 @@ using System.Threading.Channels;
 
 namespace FunCraft.Network.Connections
 {
+    using FunCraft.World;
     using Commands;
     using Data.Players;
     using Data.Sessions;
-    using FunCraft.Data.Inventory;
-    using global::FunCraft.World;
+    using Data.Inventory;
     using Handlers;
     using Players;
     using Protocol.IO;
@@ -52,7 +52,7 @@ namespace FunCraft.Network.Connections
         private ConnectionState _connectionState = ConnectionState.Handshaking;
 
         public ClientConnection(Socket socket, IWorldSource world, IPlayerRepository players, IInventoryRepository inventory,
-            ISessionStore sessions, IPlayerRegistry registry, CommandDispatcher commands, string serverName, string[] motd, int maxPlayers)
+            ISessionStore sessions, IPlayerRegistry registry, CommandDispatcher commands, ReadOnlyMemory<byte> welcomeMessage, string[] motd, int maxPlayers)
         {
             _socket = socket;
             _players = players;
@@ -69,7 +69,7 @@ namespace FunCraft.Network.Connections
             _statusHandler = new StatusHandler(motd, maxPlayers, registry) { Sender = this };
             _loginHandler = new LoginHandler(_ctx, sessions) { Sender = this };
             _configurationHandler = new ConfigurationHandler { Sender = this };
-            _playHandler = new PlayHandler(world, _ctx, players, inventory, registry, commands) { Sender = this };
+            _playHandler = new PlayHandler(world, _ctx, players, inventory, registry, commands, welcomeMessage) { Sender = this };
         }
 
         public async Task RunAsync(CancellationToken ct)

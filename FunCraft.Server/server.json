@@ -4,12 +4,19 @@
     "Name": "FunCraft",
     "MaxPlayers": 666,
     "Motd": [
-      "§6A §bFun§fC§c#§6raft §fServer",
+      "§6A §6Fun§9C#§6raft §fServer",
       "§2Custom-built in C# .NET 10",
       "§1F§2u§3n§4C§5r§6a§7f§8t§9! §fC# Minecraft Server!",
       "§fA §6FunC#raft§f Server",
       "A message of the day i guess :)",
       "Did someone say optimized?"
+    ],
+    "WelcomeMessage": [
+      "Hello, welcome to the FunC#raft server!",
+      "This server is currently in development, so please keep in mind that some if not most of the functions are not implemented and or broken.",
+      "---",
+      "Other than that, enjoy! - Evangeder",
+      "GitHub Repo at: https://github.com/Evangeder/FunCraft"
     ]
   }
 }

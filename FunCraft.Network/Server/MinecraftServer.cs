@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 
 namespace FunCraft.Network.Server
 {
@@ -21,6 +22,7 @@ namespace FunCraft.Network.Server
         private readonly string _serverName = config["Server:Name"] ?? "FunCraft";
         private readonly int _maxPlayers = int.Parse(config["Server:MaxPlayers"] ?? "20");
         private readonly string[] _motd = BuildMotd(config);
+        private readonly ReadOnlyMemory<byte> _welcomeMessage = BuildWelcomeMessage(config);
 
         protected override async Task ExecuteAsync(CancellationToken ct)
         {
@@ -51,13 +53,12 @@ namespace FunCraft.Network.Server
         private async Task HandleConnectionAsync(Socket socket, CancellationToken ct)
         {
             await using var connection = new ClientConnection(
-                socket, world, players, inventory, sessions, registry, commands, _serverName, _motd, _maxPlayers);
+                socket, world, players, inventory, sessions, registry, commands, _welcomeMessage, _motd, _maxPlayers);
             await connection.RunAsync(ct);
         }
 
         private static string[] BuildMotd(IConfiguration config)
         {
-            // GetChildren() is on IConfiguration directly — no Binder package needed.
             var lines = config.GetSection("Server:Motd")
                               .GetChildren()
                               .Select(c => c.Value ?? string.Empty)
@@ -65,6 +66,19 @@ namespace FunCraft.Network.Server
                               .ToArray();
 
             return lines.Length > 0 ? lines : ["A FunC#raft Server"];
+        }
+
+        private static ReadOnlyMemory<byte> BuildWelcomeMessage(IConfiguration config)
+        {
+            var lines = config.GetSection("Server:WelcomeMessage")
+                .GetChildren()
+                .Select(c => c.Value ?? string.Empty)
+                .Where(v => v.Length > 0)
+                .ToArray();
+
+            return lines.Length > 0
+                ? Encoding.UTF8.GetBytes(string.Join('\n', lines)).AsMemory()
+                : ReadOnlyMemory<byte>.Empty;
         }
     }
 }

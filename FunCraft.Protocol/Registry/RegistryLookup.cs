@@ -1,23 +1,25 @@
-﻿namespace FunCraft.Protocol.Registry
+﻿using System.Collections.Frozen;
+
+namespace FunCraft.Protocol.Registry
 {
     public static class RegistryLookup
     {
 #pragma warning disable CS8618
-#pragma warning disable CA1859
+        private static FrozenDictionary<uint, FrozenDictionary<uint, int>> _registries;
+
         // Registry forward map: registry_hash → (entry_name_hash → protocol_id)
         // Populated by Build() from registries.bin — unchanged from original.
-        private static IReadOnlyDictionary<uint, IReadOnlyDictionary<uint, int>> _registries;
+        //private static IReadOnlyDictionary<uint, IReadOnlyDictionary<uint, int>> _registries;
 
         // Block state maps populated by LoadBlocks() from blocks.bin.
         // keyed state lookup: full_key_hash  → global palette state ID
-        private static IReadOnlyDictionary<uint, int> _blockStates;
+        private static FrozenDictionary<uint, int> _blockStates;
         // default state lookup: block_name_hash → default global palette state ID
-        private static IReadOnlyDictionary<uint, int> _blockDefaults;
+        private static FrozenDictionary<uint, int> _blockDefaults;
         // property name set: block_name_hash → set of property names on that block
-        private static IReadOnlyDictionary<uint, HashSet<string>> _blockProperties;
+        private static FrozenDictionary<uint, HashSet<string>> _blockProperties;
         // reverse item lookup: item protocol_id → UTF-8 name bytes
-        private static IReadOnlyDictionary<int, byte[]> _itemNames;
-#pragma warning restore CA1859
+        private static FrozenDictionary<int, byte[]> _itemNames;
 #pragma warning restore CS8618
 
         public static void Build(ReadOnlySpan<byte> data)
@@ -58,10 +60,16 @@
                 result[regHash] = hashedMap;
             }
 
-            _registries = result.ToDictionary(
+            //_registries = result.ToDictionary(
+            //    kvp => kvp.Key,
+            //    kvp => (IReadOnlyDictionary<uint, int>)kvp.Value);
+            
+            _itemNames = itemNames.ToFrozenDictionary();
+
+
+            _registries = result.ToFrozenDictionary(
                 kvp => kvp.Key,
-                kvp => (IReadOnlyDictionary<uint, int>)kvp.Value);
-            _itemNames = itemNames;
+                kvp => kvp.Value.ToFrozenDictionary());
         }
 
         private static Dictionary<ushort, float> _hardnessByStateId = [];
@@ -165,9 +173,11 @@
                 hardnessMap[(ushort)stateId] = h;
             }
 
-            _blockStates = states;
-            _blockDefaults = defaults;
-            _blockProperties = props.ToDictionary(k => k.Key, k => (HashSet<string>)k.Value);
+            _blockStates = states.ToFrozenDictionary();
+            _blockDefaults = defaults.ToFrozenDictionary();
+            _blockProperties = props.ToFrozenDictionary(
+                k => k.Key,
+                k => k.Value);
             _hardnessByStateId = hardnessMap;
 
             BlockHardnessTable.Dispose();

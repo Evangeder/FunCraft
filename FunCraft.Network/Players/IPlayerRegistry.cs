@@ -12,5 +12,6 @@
         Task BroadcastAsync(IPacket packet, CancellationToken ct = default);
         Task BroadcastAsync(IPacket packet, Guid excludeUuid, CancellationToken ct = default);
         Task BroadcastRawAsync(IPacket packet, Guid excludeUuid, CancellationToken ct = default);
+        Task BroadcastMovementAsync(int movementKey, IPacket packet, Guid excludeUuid);
     }
 }

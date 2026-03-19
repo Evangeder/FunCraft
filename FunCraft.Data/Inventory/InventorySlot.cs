@@ -1,4 +1,6 @@
-﻿namespace FunCraft.Data.Inventory
+﻿using System.Runtime.InteropServices;
+
+namespace FunCraft.Data.Inventory
 {
     /// <summary>
     /// One inventory slot: item protocol ID, stack count, and remaining durability.
@@ -18,6 +20,7 @@
     /// has broken and should be removed. Use <see cref="MaxDurability"/> to
     /// distinguish — if that is also 0 the item simply has no durability model.
     /// </param>
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
     public readonly record struct InventorySlot(int ItemId, int Count, int Durability = 0)
     {
         /// <summary>Total number of window-0 slots tracked server-side.</summary>

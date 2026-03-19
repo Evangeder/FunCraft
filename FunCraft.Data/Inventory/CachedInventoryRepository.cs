@@ -1,4 +1,5 @@
 ﻿using StackExchange.Redis;
+using System.Buffers;
 
 namespace FunCraft.Data.Inventory
 {
@@ -22,16 +23,30 @@ namespace FunCraft.Data.Inventory
             if (entries.Length > 0)
             {
                 if (entries.Length == 1 && (string?)entries[0].Name == SentinelField)
+                {
                     return false;
+                }
 
                 var span = destination.Span;
+
                 foreach (var e in entries)
                 {
                     var name = (string?)e.Name;
-                    if (name is null or SentinelField) continue;
-                    if (!int.TryParse(name, out var slot) || (uint)slot >= InventorySlot.InventorySize) continue;
+
+                    if (name is null or SentinelField)
+                    {
+                        continue;
+                    }
+
+                    if (!int.TryParse(name, out var slot) || (uint)slot >= InventorySlot.InventorySize)
+                    {
+                        continue;
+                    }
+
                     if (TryParseSlotValue(e.Value, out var hs))
+                    {
                         span[slot] = hs;
+                    }
                 }
 
                 return true;
@@ -55,18 +70,40 @@ namespace FunCraft.Data.Inventory
         private async Task PopulateCacheAsync(RedisKey key, ReadOnlyMemory<InventorySlot> inv)
         {
             var span = inv.Span;
-            var entries = new List<HashEntry>(InventorySlot.InventorySize);
 
-            for (var i = 0; i < span.Length; i++)
+            // Rent a staging buffer to build HashEntry pairs without a List<T> and its
+            // internal array. InventorySize is 46 — small enough that a single rent
+            // covers all possible non-empty slots.
+            var buf = ArrayPool<HashEntry>.Shared.Rent(InventorySlot.InventorySize);
+            var count = 0;
+
+            try
             {
-                if (!span[i].IsEmpty)
-                    entries.Add(new HashEntry(i.ToString(), $"{span[i].ItemId}:{span[i].Count}"));
-            }
+                for (var i = 0; i < span.Length; i++)
+                {
+                    if (!span[i].IsEmpty)
+                    {
+                        buf[count++] = new HashEntry(i.ToString(), $"{span[i].ItemId}:{span[i].Count}");
+                    }
+                }
 
-            if (entries.Count == 0)
-                await redis.HashSetAsync(key, SentinelField, SentinelValue);
-            else
-                await redis.HashSetAsync(key, [.. entries]);
+                if (count == 0)
+                {
+                    await redis.HashSetAsync(key, SentinelField, SentinelValue);
+                }
+                else
+                {
+                    // StackExchange.Redis requires a HashEntry[]. Allocate exactly what we
+                    // need (at most 46 entries) and copy the staged results in one shot.
+                    var entries = new HashEntry[count];
+                    buf.AsSpan(0, count).CopyTo(entries.AsSpan());
+                    await redis.HashSetAsync(key, entries);
+                }
+            }
+            finally
+            {
+                ArrayPool<HashEntry>.Shared.Return(buf);
+            }
 
             await redis.KeyExpireAsync(key, CacheTtl);
         }
@@ -75,12 +112,28 @@ namespace FunCraft.Data.Inventory
         {
             slot = default;
             var str = (string?)value;
-            if (str is null) return false;
+
+            if (str is null)
+            {
+                return false;
+            }
 
             var sep = str.IndexOf(':');
-            if (sep < 1) return false;
-            if (!int.TryParse(str.AsSpan(0, sep), out var itemId)) return false;
-            if (!int.TryParse(str.AsSpan(sep + 1), out var count)) return false;
+
+            if (sep < 1)
+            {
+                return false;
+            }
+
+            if (!int.TryParse(str.AsSpan(0, sep), out var itemId))
+            {
+                return false;
+            }
+
+            if (!int.TryParse(str.AsSpan(sep + 1), out var count))
+            {
+                return false;
+            }
 
             slot = new InventorySlot(itemId, count);
             return true;
@@ -103,6 +156,7 @@ namespace FunCraft.Data.Inventory
                     foreach (var e in entries)
                     {
                         var name = (string?)e.Name;
+
                         if (name is null or SentinelField)
                         {
                             continue;

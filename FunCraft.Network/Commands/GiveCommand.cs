@@ -73,12 +73,9 @@ namespace FunCraft.Network.Commands
             item.MarkSettled();
 
             // Broadcast the spawn to all connected clients so they see the entity.
-            // PlayHandler.BroadcastSpawnItemAsync is internal, so we send directly
-            // to each player via the registry. The caller's own client will also
-            // see the entity briefly before the pickup packet removes it.
-            // We don't have direct access to registry here, so instead we fire a
-            // targeted spawn to the caller and let pickup handle the rest.
-            await sender.SendAsync(new BundleDelimiterPacket(), ct);
+            // We don't have direct access to the registry here, so we send directly
+            // to the caller and let pickup handling clean up the entity.
+            await sender.SendRawAsync(BundleDelimiterPacket.PreFramed, ct);
             await sender.SendAsync(new SpawnEntityPacket
             {
                 EntityId = item.EntityId,
@@ -100,7 +97,7 @@ namespace FunCraft.Network.Commands
                 ItemId = itemId,
                 Count = stackSize,
             }, ct);
-            await sender.SendAsync(new BundleDelimiterPacket(), ct);
+            await sender.SendRawAsync(BundleDelimiterPacket.PreFramed, ct);
 
             Span<byte> countBytes = stackalloc byte[3];
             var countLen = WriteAsciiInt(countBytes, stackSize);

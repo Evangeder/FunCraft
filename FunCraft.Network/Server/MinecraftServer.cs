@@ -62,26 +62,43 @@ namespace FunCraft.Network.Server
 
         private static string[] BuildMotd(IConfiguration config)
         {
-            var lines = config.GetSection("Server:Motd")
-                              .GetChildren()
-                              .Select(c => c.Value ?? string.Empty)
-                              .Where(v => v.Length > 0)
-                              .ToArray();
+            var children = config.GetSection("Server:Motd").GetChildren();
+            var result = new List<string>();
 
-            return lines.Length > 0 ? lines : ["A FunC#raft Server"];
+            foreach (var child in children)
+            {
+                var value = child.Value;
+
+                if (!string.IsNullOrEmpty(value))
+                {
+                    result.Add(value);
+                }
+            }
+
+            return result.Count > 0 ? result.ToArray() : ["A FunC#raft Server"];
         }
 
         private static ReadOnlyMemory<byte> BuildWelcomeMessage(IConfiguration config)
         {
-            var lines = config.GetSection("Server:WelcomeMessage")
-                .GetChildren()
-                .Select(c => c.Value ?? string.Empty)
-                .Where(v => v.Length > 0)
-                .ToArray();
+            var children = config.GetSection("Server:WelcomeMessage").GetChildren();
+            var lines = new List<string>();
 
-            return lines.Length > 0
-                ? Encoding.UTF8.GetBytes(string.Join('\n', lines)).AsMemory()
-                : ReadOnlyMemory<byte>.Empty;
+            foreach (var child in children)
+            {
+                var value = child.Value;
+
+                if (!string.IsNullOrEmpty(value))
+                {
+                    lines.Add(value);
+                }
+            }
+
+            if (lines.Count == 0)
+            {
+                return ReadOnlyMemory<byte>.Empty;
+            }
+
+            return Encoding.UTF8.GetBytes(string.Join('\n', lines)).AsMemory();
         }
     }
 }

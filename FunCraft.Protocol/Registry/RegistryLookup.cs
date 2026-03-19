@@ -83,7 +83,12 @@ namespace FunCraft.Protocol.Registry
 
                 var bracketIdx = IndexOf(key, (byte)'[');
                 var nameSpan = bracketIdx >= 0 ? key[..bracketIdx] : key;
-                var nameStr = Utf8ToString(nameSpan);
+
+                // Intern the block name string so all state variants of the same block
+                // (e.g. all 64 states of oak_stairs) share one string object rather than
+                // each creating their own. Without interning, "minecraft:oak_stairs" was
+                // allocated ~64 times in stateNames, one per state variant.
+                var nameStr = string.Intern(Utf8ToString(nameSpan));
                 stateNames.Add((stateId, nameStr));
 
                 if (bracketIdx < 0)
@@ -113,7 +118,14 @@ namespace FunCraft.Protocol.Registry
                     {
                         var pair = inside[start..ci];
                         var eq = IndexOf(pair, (byte)'=');
-                        if (eq >= 0) propSet.Add(Utf8ToString(pair[..eq]));
+
+                        // Intern property name strings ("waterlogged", "facing", "powered", etc.).
+                        // Each name appears as a property on hundreds of blocks; without interning,
+                        // "waterlogged" alone produced 411 separate equal string objects in Gen2.
+                        if (eq >= 0)
+                        {
+                            propSet.Add(string.Intern(Utf8ToString(pair[..eq])));
+                        }
                     }
 
                     start = ci + 1;

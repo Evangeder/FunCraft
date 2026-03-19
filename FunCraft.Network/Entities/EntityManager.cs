@@ -5,6 +5,11 @@ namespace FunCraft.Network.Entities
     public sealed class EntityManager : IEntityManager
     {
         private readonly ConcurrentDictionary<int, ItemEntity> _items = new();
+        private readonly object _snapshotLock = new();
+
+        // Copy-on-write snapshot rebuilt under _snapshotLock on every add/remove.
+        // GetAllItems() returns this array directly — zero allocation on the read path.
+        private ItemEntity[] _snapshot = [];
 
         public ItemEntity SpawnItem(int itemId, int count,
             double x, double y, double z,
@@ -13,16 +18,22 @@ namespace FunCraft.Network.Entities
         {
             var entity = new ItemEntity(itemId, count, x, y, z, vx, vy, vz, instantPickup);
             _items[entity.EntityId] = entity;
+            RebuildSnapshot();
             return entity;
         }
 
-        public void ReAdd(ItemEntity item) => _items[item.EntityId] = item;
+        public void ReAdd(ItemEntity item)
+        {
+            _items[item.EntityId] = item;
+            RebuildSnapshot();
+        }
 
         public bool TryRemove(int entityId, out ItemEntity? entity)
         {
             if (_items.TryRemove(entityId, out var found))
             {
                 entity = found;
+                RebuildSnapshot();
                 return true;
             }
 
@@ -30,7 +41,26 @@ namespace FunCraft.Network.Entities
             return false;
         }
 
-        public IReadOnlyList<ItemEntity> GetAllItems() => [.. _items.Values];
+        private void RebuildSnapshot()
+        {
+            lock (_snapshotLock)
+            {
+                var values = _items.Values;
+                var next = new ItemEntity[values.Count];
+                var i = 0;
+
+                foreach (var e in values)
+                {
+                    next[i++] = e;
+                }
+
+                Volatile.Write(ref _snapshot, next);
+            }
+        }
+
+        // Returns the cached snapshot — zero allocation on the read path.
+        public IReadOnlyList<ItemEntity> GetAllItems() =>
+            Volatile.Read(ref _snapshot);
 
         public IReadOnlyList<ItemEntity> FindPickups(double x, double y, double z, double radius)
         {
@@ -59,15 +89,28 @@ namespace FunCraft.Network.Entities
 
             foreach (var item in _items.Values)
             {
-                if (item.EntityId == excludeEntityId) continue;
-                if (item.ItemId != itemId) continue;
-                if (!item.IsSettled) continue;   // only merge items at rest
+                if (item.EntityId == excludeEntityId)
+                {
+                    continue;
+                }
+
+                if (item.ItemId != itemId)
+                {
+                    continue;
+                }
+
+                if (!item.IsSettled)
+                {
+                    continue;
+                }
 
                 var dx = item.X - x;
                 var dz2 = item.Z - z;
 
                 if (dx * dx + dz2 * dz2 <= radiusSq)
+                {
                     return item;
+                }
             }
 
             return null;

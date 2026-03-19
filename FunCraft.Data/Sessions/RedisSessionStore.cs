@@ -32,30 +32,52 @@ namespace FunCraft.Data.Sessions
             var key = Key(uuid);
             var entries = await redis.HashGetAllAsync(key);
 
-            if (entries.Length > 0)
+            if (entries.Length == 0)
             {
-                var map = entries.ToDictionary(e => (string)e.Name!, e => e.Value);
-                var username = (string?)map.GetValueOrDefault("username") ?? "";
-                var ip = (string?)map.GetValueOrDefault("ip") ?? "";
-                var connectedAt = map.TryGetValue("connected_at", out var ms)
-                    ? DateTimeOffset.FromUnixTimeMilliseconds((long)ms)
-                    : disconnectedAt;
-
-                await using var cmd = db.CreateCommand(
-                    """
-                    INSERT INTO sessions (uuid, username, ip_address, connected_at, disconnected_at)
-                    VALUES ($1, $2, $3, $4, $5)
-                    """);
-
-                cmd.Parameters.AddWithValue(uuid);
-                cmd.Parameters.AddWithValue(username);
-                cmd.Parameters.AddWithValue(ip);
-                cmd.Parameters.AddWithValue(connectedAt.UtcDateTime);
-                cmd.Parameters.AddWithValue(disconnectedAt.UtcDateTime);
-
-                await cmd.ExecuteNonQueryAsync(ct);
-                await redis.KeyDeleteAsync(key);
+                return;
             }
+
+            // Walk the flat entry array without LINQ or Dictionary allocation.
+            // The hash has exactly 3 fields: username, ip, connected_at.
+            string username = "";
+            string ip = "";
+            DateTimeOffset connectedAt = disconnectedAt;
+
+            foreach (var entry in entries)
+            {
+                var name = (string?)entry.Name;
+
+                if (name == "username")
+                {
+                    username = (string?)entry.Value ?? "";
+                }
+                else if (name == "ip")
+                {
+                    ip = (string?)entry.Value ?? "";
+                }
+                else if (name == "connected_at")
+                {
+                    if ((long?)entry.Value is long ms)
+                    {
+                        connectedAt = DateTimeOffset.FromUnixTimeMilliseconds(ms);
+                    }
+                }
+            }
+
+            await using var cmd = db.CreateCommand(
+                """
+                INSERT INTO sessions (uuid, username, ip_address, connected_at, disconnected_at)
+                VALUES ($1, $2, $3, $4, $5)
+                """);
+
+            cmd.Parameters.AddWithValue(uuid);
+            cmd.Parameters.AddWithValue(username);
+            cmd.Parameters.AddWithValue(ip);
+            cmd.Parameters.AddWithValue(connectedAt.UtcDateTime);
+            cmd.Parameters.AddWithValue(disconnectedAt.UtcDateTime);
+
+            await cmd.ExecuteNonQueryAsync(ct);
+            await redis.KeyDeleteAsync(key);
         }
 
         private static RedisKey Key(Guid uuid) => $"session:{uuid:N}";

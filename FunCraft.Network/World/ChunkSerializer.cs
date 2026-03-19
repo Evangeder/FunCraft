@@ -1,4 +1,5 @@
 ﻿using FunCraft.Protocol.Types;
+using System.Buffers;
 using System.Buffers.Binary;
 
 namespace FunCraft.Network.World
@@ -8,6 +9,18 @@ namespace FunCraft.Network.World
     /// <summary>
     /// Converts a <see cref="ChunkColumn"/> into the protocol-773 binary payload
     /// expected by <c>ChunkDataPacket</c>: heightmaps + sections + block entities + light.
+    ///
+    /// <para>
+    /// Allocation budget per <see cref="Serialize"/> call:
+    /// <list type="bullet">
+    ///   <item>One <c>int[]</c> rented for both heightmaps (512 ints, returned before return).</item>
+    ///   <item>One <c>int[]</c> rented as palette scratch across all 24 sections (4096 ints, returned before return).</item>
+    ///   <item>One <c>long[]</c> rented per section for packed block data (returned per section).</item>
+    ///   <item>One <c>MemoryStream</c> buffer for the output, returned as the final <c>byte[]</c> via <c>ms.ToArray()</c>.</item>
+    /// </list>
+    /// All other operations (palette building, reverse-map lookups via binary search,
+    /// heightmap packing) are allocation-free.
+    /// </para>
     /// </summary>
     public static class ChunkSerializer
     {
@@ -22,9 +35,9 @@ namespace FunCraft.Network.World
         private const long AllSectionBits = (1L << LightSections) - 1;
 
         // Indirect (indirect-mapped) mode thresholds for block states:
-        //   0       → single-valued palette
-        //   4-8     → indirect palette
-        //   ≥9 (15) → direct (global palette)
+        //   0       -> single-valued palette
+        //   4-8     -> indirect palette
+        //   >=9 (15) -> direct (global palette)
         private const int DirectBpe = 15;
         private const int MaxIndirectBpe = 8;
 
@@ -36,17 +49,38 @@ namespace FunCraft.Network.World
         public static byte[] Serialize(ChunkColumn column)
         {
             using var ms = new MemoryStream(16_384);
-            WriteHeightmaps(ms, column);
-            WriteChunkSections(ms, column);
-            WriteBlockEntities(ms);
-            WriteLightData(ms);
+
+            // Rent one buffer for both heightmaps (256 ints each = 512 total).
+            var heightBuf = ArrayPool<int>.Shared.Rent(512);
+
+            // Rent one scratch buffer reused across all 24 sections for palette building.
+            // After BuildPaletteIntoScratch(), scratch[0..paletteCount-1] holds the
+            // sorted unique palette values; remainder is undefined.
+            var paletteScratch = ArrayPool<int>.Shared.Rent(ChunkSection.Volume);
+
+            try
+            {
+                WriteHeightmaps(ms, column, heightBuf);
+                WriteChunkSections(ms, column, paletteScratch);
+                WriteBlockEntities(ms);
+                WriteLightData(ms);
+            }
+            finally
+            {
+                ArrayPool<int>.Shared.Return(heightBuf);
+                ArrayPool<int>.Shared.Return(paletteScratch);
+            }
+
             return ms.ToArray();
         }
 
-        private static void WriteHeightmaps(Stream s, ChunkColumn column)
+        private static void WriteHeightmaps(Stream s, ChunkColumn column, int[] heightBuf)
         {
-            var motionBlocking = ComputeHeightmap(column, includeMotionBlocking: true);
-            var worldSurface = ComputeHeightmap(column, includeMotionBlocking: false);
+            var motionBlocking = heightBuf.AsSpan(0, 256);
+            var worldSurface = heightBuf.AsSpan(256, 256);
+
+            ComputeHeightmap(column, motionBlocking, includeMotionBlocking: true);
+            ComputeHeightmap(column, worldSurface, includeMotionBlocking: false);
 
             WriteVarInt(s, 2);
 
@@ -58,14 +92,14 @@ namespace FunCraft.Network.World
         }
 
         /// <summary>
-        /// Returns a 256-element array (column-major: z*16+x) of surface heights.
+        /// Fills <paramref name="output"/> (must be length 256) with surface heights.
         /// Each value is the Y coordinate of the highest solid block + 1,
-        /// relative to world minimum (i.e., value 0 means no solid blocks).
+        /// relative to world minimum (value 0 means no solid blocks in that column).
         /// </summary>
-        private static int[] ComputeHeightmap(ChunkColumn column, bool includeMotionBlocking)
+        private static void ComputeHeightmap(ChunkColumn column, Span<int> output, bool includeMotionBlocking)
         {
-            var heights = new int[256];
             for (var z = 0; z < 16; z++)
+            {
                 for (var x = 0; x < 16; x++)
                 {
                     for (var y = 319; y >= ChunkColumn.WorldMinY; y--)
@@ -77,25 +111,25 @@ namespace FunCraft.Network.World
                             continue;
                         }
 
-                        heights[z * 16 + x] = (y - ChunkColumn.WorldMinY) + 1;
+                        output[z * 16 + x] = (y - ChunkColumn.WorldMinY) + 1;
                         break;
                     }
                 }
-            return heights;
+            }
         }
 
         /// <summary>
         /// Writes <paramref name="count"/> values from <paramref name="values"/> packed
         /// at <paramref name="bpe"/> bits-per-entry into a prefixed array of longs.
+        /// No heap allocation — streams longs one at a time.
         /// </summary>
-        private static void WritePackedLongs(Stream s, int[] values, int bpe, int count)
+        private static void WritePackedLongs(Stream s, ReadOnlySpan<int> values, int bpe, int count)
         {
             var entriesPerLong = 64 / bpe;
             var numLongs = (count + entriesPerLong - 1) / entriesPerLong;
 
             WriteVarInt(s, numLongs);
 
-            var longIndex = 0;
             var shift = 0;
             var current = 0L;
 
@@ -110,7 +144,6 @@ namespace FunCraft.Network.World
                 }
 
                 WriteI64(s, current);
-                longIndex++;
                 current = 0L;
                 shift = 0;
             }
@@ -121,62 +154,80 @@ namespace FunCraft.Network.World
             }
         }
 
-        private static void WriteChunkSections(Stream s, ChunkColumn column)
+        private static void WriteChunkSections(Stream s, ChunkColumn column, int[] paletteScratch)
         {
+            // Two-pass: measure total bytes first (required by protocol — length prefix before data),
+            // then write. Both passes use the same scratch array; BuildPaletteIntoScratch
+            // always re-fills it from section.Blocks so stale data from a previous section
+            // is harmless.
             var totalBytes = 0;
+
             for (var i = 0; i < ChunkColumn.SectionCount; i++)
             {
-                totalBytes += MeasureSection(column.GetSection(i));
+                totalBytes += MeasureSection(column.GetSection(i), paletteScratch);
             }
 
             WriteVarInt(s, totalBytes);
 
             for (var i = 0; i < ChunkColumn.SectionCount; i++)
             {
-                WriteSection(s, column.GetSection(i));
+                WriteSection(s, column.GetSection(i), paletteScratch);
             }
         }
 
-        private static int MeasureSection(ChunkSection section)
+        private static int MeasureSection(ChunkSection section, int[] paletteScratch)
         {
             var size = 2;
-            size += MeasureBlockStateContainer(section);
+            size += MeasureBlockStateContainer(section, paletteScratch);
+
+            // Biome container: 1 byte (bpe=0) + VarInt(0) = 2 bytes.
             size += 2;
             return size;
         }
 
-        private static int MeasureBlockStateContainer(ChunkSection section)
+        private static int MeasureBlockStateContainer(ChunkSection section, int[] paletteScratch)
         {
             if (section.IsUniform(out var uniform))
             {
+                // bpe byte (0) + VarInt(blockId)
                 return 1 + VarInt.GetSize(uniform.Id);
             }
 
-            var palette = BuildPalette(section, out var bpe);
+            BuildPaletteIntoScratch(section, paletteScratch, out var paletteCount, out var bpe);
+
             if (bpe <= MaxIndirectBpe)
             {
                 var entriesPerLong = 64 / bpe;
                 var numLongs = (ChunkSection.Volume + entriesPerLong - 1) / entriesPerLong;
 
-                return 1 + VarInt.GetSize(palette.Count) + palette.Sum(VarInt.GetSize) + numLongs * 8;
+                // Sum palette VarInt sizes without LINQ.
+                var paletteVarIntSum = 0;
+
+                for (var i = 0; i < paletteCount; i++)
+                {
+                    paletteVarIntSum += VarInt.GetSize(paletteScratch[i]);
+                }
+
+                return 1 + VarInt.GetSize(paletteCount) + paletteVarIntSum + numLongs * 8;
             }
             else
             {
                 const int entriesPerLong = 64 / DirectBpe;
                 const int numLongs = (ChunkSection.Volume + entriesPerLong - 1) / entriesPerLong;
 
+                // bpe byte + packed data
                 return 1 + numLongs * 8;
             }
         }
 
-        private static void WriteSection(Stream s, ChunkSection section)
+        private static void WriteSection(Stream s, ChunkSection section, int[] paletteScratch)
         {
             WriteI16(s, section.BlockCount);
-            WriteBlockStateContainer(s, section);
+            WriteBlockStateContainer(s, section, paletteScratch);
             WriteBiomeContainer(s);
         }
 
-        private static void WriteBlockStateContainer(Stream s, ChunkSection section)
+        private static void WriteBlockStateContainer(Stream s, ChunkSection section, int[] paletteScratch)
         {
             if (section.IsUniform(out var uniform))
             {
@@ -185,15 +236,19 @@ namespace FunCraft.Network.World
                 return;
             }
 
-            var palette = BuildPalette(section, out var bpe);
+            BuildPaletteIntoScratch(section, paletteScratch, out var paletteCount, out var bpe);
 
             if (bpe <= MaxIndirectBpe)
             {
                 s.WriteByte((byte)bpe);
-                WriteVarInt(s, palette.Count);
-                foreach (var id in palette)
-                    WriteVarInt(s, id);
-                WriteIndirectData(s, section, palette, bpe);
+                WriteVarInt(s, paletteCount);
+
+                for (var i = 0; i < paletteCount; i++)
+                {
+                    WriteVarInt(s, paletteScratch[i]);
+                }
+
+                WriteIndirectData(s, section, paletteScratch, paletteCount, bpe);
             }
             else
             {
@@ -202,47 +257,85 @@ namespace FunCraft.Network.World
             }
         }
 
-        private static List<int> BuildPalette(ChunkSection section, out int bpe)
+        /// <summary>
+        /// Collects all block state IDs from <paramref name="section"/> into
+        /// <paramref name="scratch"/>, sorts them, then deduplicates in-place so that
+        /// <c>scratch[0..paletteCount-1]</c> holds the sorted unique palette entries.
+        /// Sets <paramref name="bpe"/> to the bits-per-entry for this palette.
+        /// <para>
+        /// <paramref name="scratch"/> must be at least <see cref="ChunkSection.Volume"/> (4096) ints.
+        /// </para>
+        /// </summary>
+        private static void BuildPaletteIntoScratch(
+            ChunkSection section, int[] scratch, out int paletteCount, out int bpe)
         {
-            var set = new HashSet<int>();
-            foreach (var b in section.Blocks)
-            {
-                set.Add(b.Id);
-            }
-
-            var palette = new List<int>(set);
-            palette.Sort();
-
-            bpe = Math.Max(4, CeilLog2(palette.Count));
-            if (bpe > MaxIndirectBpe) bpe = DirectBpe;
-            return palette;
-        }
-
-        private static void WriteIndirectData(Stream s, ChunkSection section,
-            List<int> palette, int bpe)
-        {
-            var reverseMap = new Dictionary<int, int>(palette.Count);
-            for (var i = 0; i < palette.Count; i++)
-            {
-                reverseMap[palette[i]] = i;
-            }
-
-            var entriesPerLong = 64 / bpe;
-            var numLongs = (ChunkSection.Volume + entriesPerLong - 1) / entriesPerLong;
-            var longs = new long[numLongs];
-
             var blocks = section.Blocks;
+
             for (var i = 0; i < blocks.Length; i++)
             {
-                var paletteIndex = reverseMap[blocks[i].Id];
-                var longIndex = i / entriesPerLong;
-                var shift = (i % entriesPerLong) * bpe;
-                longs[longIndex] |= ((long)paletteIndex) << shift;
+                scratch[i] = blocks[i].Id;
             }
 
-            foreach (var l in longs)
+            // Sort in-place — O(n log n), no allocation.
+            scratch.AsSpan(0, ChunkSection.Volume).Sort();
+
+            // Dedup in-place: unique values land in scratch[0..paletteCount-1].
+            paletteCount = 0;
+            var prev = -1;
+
+            for (var i = 0; i < ChunkSection.Volume; i++)
             {
-                WriteI64(s, l);
+                if (scratch[i] != prev)
+                {
+                    scratch[paletteCount++] = scratch[i];
+                    prev = scratch[i];
+                }
+            }
+
+            bpe = Math.Max(4, CeilLog2(paletteCount));
+
+            if (bpe > MaxIndirectBpe)
+            {
+                bpe = DirectBpe;
+            }
+        }
+
+        /// <summary>
+        /// Writes section blocks packed into longs using the given <paramref name="palette"/>.
+        /// Uses a rented <c>long[]</c> for packing; palette index lookup is O(log n) binary
+        /// search on the sorted <paramref name="palette"/> span — no Dictionary allocation.
+        /// </summary>
+        private static void WriteIndirectData(
+            Stream s, ChunkSection section,
+            int[] palette, int paletteCount, int bpe)
+        {
+            var entriesPerLong = 64 / bpe;
+            var numLongs = (ChunkSection.Volume + entriesPerLong - 1) / entriesPerLong;
+
+            var longs = ArrayPool<long>.Shared.Rent(numLongs);
+
+            try
+            {
+                longs.AsSpan(0, numLongs).Clear();
+
+                var blocks = section.Blocks;
+
+                for (var i = 0; i < blocks.Length; i++)
+                {
+                    var paletteIndex = BinarySearch(palette, paletteCount, blocks[i].Id);
+                    var longIndex = i / entriesPerLong;
+                    var shift = (i % entriesPerLong) * bpe;
+                    longs[longIndex] |= ((long)paletteIndex) << shift;
+                }
+
+                for (var i = 0; i < numLongs; i++)
+                {
+                    WriteI64(s, longs[i]);
+                }
+            }
+            finally
+            {
+                ArrayPool<long>.Shared.Return(longs);
             }
         }
 
@@ -250,23 +343,68 @@ namespace FunCraft.Network.World
         {
             const int entriesPerLong = 64 / DirectBpe;
             const int numLongs = (ChunkSection.Volume + entriesPerLong - 1) / entriesPerLong;
-            var longs = new long[numLongs];
 
-            var blocks = section.Blocks;
-            for (var i = 0; i < blocks.Length; i++)
+            var longs = ArrayPool<long>.Shared.Rent(numLongs);
+
+            try
             {
-                var longIndex = i / entriesPerLong;
-                var shift = (i % entriesPerLong) * DirectBpe;
-                longs[longIndex] |= ((long)blocks[i].Id) << shift;
+                longs.AsSpan(0, numLongs).Clear();
+
+                var blocks = section.Blocks;
+
+                for (var i = 0; i < blocks.Length; i++)
+                {
+                    var longIndex = i / entriesPerLong;
+                    var shift = (i % entriesPerLong) * DirectBpe;
+                    longs[longIndex] |= ((long)blocks[i].Id) << shift;
+                }
+
+                for (var i = 0; i < numLongs; i++)
+                {
+                    WriteI64(s, longs[i]);
+                }
             }
-
-            foreach (var l in longs)
+            finally
             {
-                WriteI64(s, l);
+                ArrayPool<long>.Shared.Return(longs);
             }
         }
 
-        // Biomes are always single-valued (plains = 0) for now
+        /// <summary>
+        /// Binary search on a sorted <paramref name="array"/> segment of length
+        /// <paramref name="count"/>. Returns the index of <paramref name="value"/>.
+        /// The value is guaranteed to exist (block IDs come from the same section that
+        /// built the palette), so the not-found path is unreachable in practice.
+        /// </summary>
+        private static int BinarySearch(int[] array, int count, int value)
+        {
+            var lo = 0;
+            var hi = count - 1;
+
+            while (lo <= hi)
+            {
+                var mid = (lo + hi) >> 1;
+
+                if (array[mid] == value)
+                {
+                    return mid;
+                }
+
+                if (array[mid] < value)
+                {
+                    lo = mid + 1;
+                }
+                else
+                {
+                    hi = mid - 1;
+                }
+            }
+
+            // Should never reach here if the palette was built from this section.
+            return 0;
+        }
+
+        // Biomes are always single-valued (plains = 0) for now.
         private static void WriteBiomeContainer(Stream s)
         {
             s.WriteByte(0);
@@ -296,9 +434,15 @@ namespace FunCraft.Network.World
         private static void WriteVarInt(Stream s, int value)
         {
             var uv = (uint)value;
+
             while (true)
             {
-                if ((uv & ~0x7Fu) == 0) { s.WriteByte((byte)uv); return; }
+                if ((uv & ~0x7Fu) == 0)
+                {
+                    s.WriteByte((byte)uv);
+                    return;
+                }
+
                 s.WriteByte((byte)((uv & 0x7F) | 0x80));
                 uv >>= 7;
             }

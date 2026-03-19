@@ -32,12 +32,69 @@ namespace FunCraft.Network.Connections
         // Postgres default max_connections = 100; keep headroom for reads.
         private static readonly SemaphoreSlim _persistGate = new(20, 20);
 
-        // Unbounded channel — single reader (DrainAsync), multiple writers.
-        // Each item is a self-contained byte[] frame; the drain loop sends them
-        // sequentially without any lock contention.
+        // ── Reliable send channel (bounded) ──────────────────────────────────────
+        // For all packets that must be delivered exactly once and in order:
+        // chunks, entity spawns/despawns, inventory, chat, keep-alive.
+        //
+        // Capacity: 8192 frames covers join burst (~30 frames for chunks + spawns) for
+        // any reasonable population. When exceeded the connection is actively fallen
+        // behind (not reading TCP data) and is disconnected via CloseConnection().
+        private const int ReliableChannelCapacity = 8192;
+
         private readonly Channel<ReadOnlyMemory<byte>> _sendChannel =
-            Channel.CreateUnbounded<ReadOnlyMemory<byte>>(
-                new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+            Channel.CreateBounded<ReadOnlyMemory<byte>>(
+                new BoundedChannelOptions(ReliableChannelCapacity)
+                {
+                    SingleReader = true,
+                    SingleWriter = false,
+                    FullMode = BoundedChannelFullMode.Wait,
+                });
+
+        // ── Lock-free movement supersession slot arrays ──────────────────────────
+        //
+        // At 1000 bots, BroadcastMovementAsync writes to 999 connections per packet.
+        // 999 threads simultaneously trying to acquire each connection's SpinLock
+        // caused O(N²) lock contention — 32% CPU on Dictionary.set_Item + 13% on
+        // SpinLock at 1k bots.
+        //
+        // Fix: byte[] is a reference type. On all .NET-supported platforms,
+        // reference-sized writes are naturally atomic and Volatile.Write adds the
+        // required release fence. No lock is needed; concurrent writes to the same
+        // slot are safe — supersession semantics mean the latest write wins, and
+        // both are valid position updates for the same entity.
+        //
+        // Key encoding:
+        //   movementKey >= 0  → body slot _bodySlots[key]   (pos/rot/teleport)
+        //   movementKey <  0  → head slot _headSlots[~key]  (head rotation)
+        //
+        // Capacity: 4096 covers entity IDs 0..4095 — far more than any real deployment.
+        // Entity IDs are sequential from EntityIdSource so no collision is possible.
+        private const int MovementSlotCount = 4096;
+
+        private readonly byte[]?[] _bodySlots = new byte[]?[MovementSlotCount];
+        private readonly byte[]?[] _headSlots = new byte[]?[MovementSlotCount];
+
+        // High-water marks. DrainAsync only iterates 0..highWater — no wasted
+        // null-check iterations beyond the highest entity ID seen this session.
+        // Updated with Interlocked.Max so they only grow, never shrink.
+        private int _bodyHighWater;
+        private int _headHighWater;
+
+        // Interlocked gate for the wake signal.
+        // 0 = no signal pending, 1 = signal sent, pending drain.
+        // EnqueueMovementFrame calls TryWrite at most ONCE per drain cycle.
+        private int _movementPending;
+
+        // Single-item channel. DrainAsync waits here when both the reliable channel
+        // and all movement slots are empty. Writers signal it via _movementPending gate.
+        private readonly Channel<byte> _movementWake =
+            Channel.CreateBounded<byte>(new BoundedChannelOptions(1)
+            {
+                FullMode = BoundedChannelFullMode.DropWrite,
+            });
+
+        // Set to 1 the first time CloseConnection() is called to prevent double-close.
+        private int _closed;
 
         private readonly PlayerContext _ctx;
         private readonly IPlayerRepository _players;
@@ -86,6 +143,7 @@ namespace FunCraft.Network.Connections
             // so WaitToReadAsync unblocks and the connection can be disposed.
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             var token = cts.Token;
+
             try
             {
                 await Task.WhenAll(
@@ -97,7 +155,6 @@ namespace FunCraft.Network.Connections
             catch (Exception) { }
         }
 
-        // Cancels the CTS when the wrapped task finishes (for any reason).
         private static async Task CancelOnComplete(Task task, CancellationTokenSource cts)
         {
             try
@@ -113,52 +170,113 @@ namespace FunCraft.Network.Connections
 
         // ─── Send drain ──────────────────────────────────────────────────────────
 
-        // Reused across iterations — cleared each time, never grows unboundedly
-        // because we cap at MaxCoalesce frames per send.
-        private const int MaxCoalesce = 64;
+        // 512 segments per writev() syscall. At ~30 bytes/frame, one call sends
+        // ~15 KB. For 2000 pending movement slots: 4 scatter-gather sends vs 32
+        // at the old MaxCoalesce = 64.
+        private const int MaxCoalesce = 512;
         private readonly List<ArraySegment<byte>> _sendBuffers = new(MaxCoalesce);
 
         private async Task DrainAsync(CancellationToken ct)
         {
-            var reader = _sendChannel.Reader;
+            var reliableReader = _sendChannel.Reader;
+            var wakeReader = _movementWake.Reader;
+
+            var reliableWaitTask = reliableReader.WaitToReadAsync(ct).AsTask();
+            var wakeWaitTask = wakeReader.WaitToReadAsync(ct).AsTask();
+
             try
             {
-                while (await reader.WaitToReadAsync(ct))
+                while (!ct.IsCancellationRequested)
                 {
-                    // Coalesce all queued frames (up to MaxCoalesce) into one scatter-gather send.
-                    // Socket.SendAsync(IList<ArraySegment<byte>>) maps to a single writev() syscall
-                    // regardless of how many segments are in the list.
                     _sendBuffers.Clear();
-                    while (_sendBuffers.Count < MaxCoalesce && reader.TryRead(out var framed))
+
+                    // ── Movement supersession slots ───────────────────────────────
+                    // Reset pending flag BEFORE reading slots so any frame written
+                    // after this point either: lands in a slot we haven't passed yet
+                    // (processed this cycle), OR lands after we pass it and correctly
+                    // re-signals via the Interlocked gate (processed next cycle).
+                    Volatile.Write(ref _movementPending, 0);
+
+                    var bodyHigh = Volatile.Read(ref _bodyHighWater);
+                    var headHigh = Volatile.Read(ref _headHighWater);
+
+                    for (var i = 0; i < bodyHigh && _sendBuffers.Count < MaxCoalesce; i++)
                     {
-                        if (System.Runtime.InteropServices.MemoryMarshal.TryGetArray(framed, out var seg))
-                            _sendBuffers.Add(seg);
+                        var frame = Interlocked.Exchange(ref _bodySlots[i], null);
+
+                        if (frame is not null)
+                        {
+                            _sendBuffers.Add(new ArraySegment<byte>(frame));
+                        }
                     }
 
-                    if (_sendBuffers.Count == 0) continue;
-
-                    try
+                    for (var i = 0; i < headHigh && _sendBuffers.Count < MaxCoalesce; i++)
                     {
-                        if (_sendBuffers.Count == 1)
+                        var frame = Interlocked.Exchange(ref _headSlots[i], null);
+
+                        if (frame is not null)
                         {
-                            // Fast path — single frame, no list overhead.
-                            var mem = _sendBuffers[0].AsMemory();
-                            while (mem.Length > 0)
+                            _sendBuffers.Add(new ArraySegment<byte>(frame));
+                        }
+                    }
+
+                    // ── Reliable frames ───────────────────────────────────────────
+                    while (_sendBuffers.Count < MaxCoalesce && reliableReader.TryRead(out var reliableFrame))
+                    {
+                        if (System.Runtime.InteropServices.MemoryMarshal.TryGetArray(reliableFrame, out var seg))
+                        {
+                            _sendBuffers.Add(seg);
+                        }
+                    }
+
+                    if (_sendBuffers.Count > 0)
+                    {
+                        try
+                        {
+                            if (_sendBuffers.Count == 1)
                             {
-                                var sent = await _socket.SendAsync(mem, ct);
-                                mem = mem[sent..];
+                                var mem = _sendBuffers[0].AsMemory();
+
+                                while (mem.Length > 0)
+                                {
+                                    var sent = await _socket.SendAsync(mem, ct);
+                                    mem = mem[sent..];
+                                }
+                            }
+                            else
+                            {
+                                // All segments in one writev() syscall.
+                                await _socket.SendAsync(_sendBuffers, SocketFlags.None);
                             }
                         }
-                        else
+                        catch
                         {
-                            // Scatter-gather — all frames in one syscall.
-                            await _socket.SendAsync(_sendBuffers, SocketFlags.None);
+                            break;
+                        }
+
+                        continue;
+                    }
+
+                    // ── Idle wait ─────────────────────────────────────────────────
+                    var completed = await Task.WhenAny(reliableWaitTask, wakeWaitTask);
+
+                    if (completed == reliableWaitTask)
+                    {
+                        if (!ct.IsCancellationRequested)
+                        {
+                            reliableWaitTask = reliableReader.WaitToReadAsync(ct).AsTask();
                         }
                     }
-                    catch
+
+                    if (completed == wakeWaitTask)
                     {
-                        break;
-                    } // socket dead — exit drain
+                        while (wakeReader.TryRead(out _)) { }
+
+                        if (!ct.IsCancellationRequested)
+                        {
+                            wakeWaitTask = wakeReader.WaitToReadAsync(ct).AsTask();
+                        }
+                    }
                 }
             }
             catch (OperationCanceledException)
@@ -173,14 +291,24 @@ namespace FunCraft.Network.Connections
         {
             while (!ct.IsCancellationRequested)
             {
-                var buffer = _pipe.Writer.GetMemory(4096);
+                // 16 KB hint: fewer BufferSegment objects promoted to Gen2.
+                var buffer = _pipe.Writer.GetMemory(16_384);
                 var bytesRead = await _socket.ReceiveAsync(buffer, ct);
-                if (bytesRead == 0) break;
+
+                if (bytesRead == 0)
+                {
+                    break;
+                }
 
                 _pipe.Writer.Advance(bytesRead);
                 var result = await _pipe.Writer.FlushAsync(ct);
-                if (result.IsCompleted) break;
+
+                if (result.IsCompleted)
+                {
+                    break;
+                }
             }
+
             await _pipe.Writer.CompleteAsync();
         }
 
@@ -200,8 +328,13 @@ namespace FunCraft.Network.Connections
                 }
 
                 _pipe.Reader.AdvanceTo(consumed, examined);
-                if (result.IsCompleted) break;
+
+                if (result.IsCompleted)
+                {
+                    break;
+                }
             }
+
             await _pipe.Reader.CompleteAsync();
         }
 
@@ -211,18 +344,32 @@ namespace FunCraft.Network.Connections
             if (buffer.Length > 0 && buffer.FirstSpan[0] == LegacyPingPacket)
             {
                 buffer = buffer.Slice(buffer.Length);
-                packetId = 0; payload = default;
+                packetId = 0;
+                payload = default;
                 return false;
             }
 
-            packetId = 0; payload = default;
+            packetId = 0;
+            payload = default;
 
             var reader = new SequenceReader<byte>(buffer);
-            if (!VarInt.TryRead(ref reader, out var length)) return false;
-            if (reader.Remaining < length) return false;
+
+            if (!VarInt.TryRead(ref reader, out var length))
+            {
+                return false;
+            }
+
+            if (reader.Remaining < length)
+            {
+                return false;
+            }
 
             var beforeId = reader.Consumed;
-            if (!VarInt.TryRead(ref reader, out packetId)) return false;
+
+            if (!VarInt.TryRead(ref reader, out packetId))
+            {
+                return false;
+            }
 
             var idLength = reader.Consumed - beforeId;
             var payloadLength = length - idLength;
@@ -247,7 +394,9 @@ namespace FunCraft.Network.Connections
             };
 
             if (_connectionState != previous)
+            {
                 await OnStateEnteredAsync(_connectionState, ct);
+            }
         }
 
         private async ValueTask OnStateEnteredAsync(ConnectionState state, CancellationToken ct)
@@ -268,6 +417,7 @@ namespace FunCraft.Network.Connections
             if (_ctx.Uuid != Guid.Empty)
             {
                 _registry.Unregister(_ctx.Uuid);
+
                 try
                 {
                     await _registry.BroadcastRawAsync(new PlayerInfoRemovePacket
@@ -275,13 +425,11 @@ namespace FunCraft.Network.Connections
                         Uuids = [_ctx.Uuid]
                     }, _ctx.Uuid);
 
-                    // Remove this player's entity from every other client's world.
                     await _registry.BroadcastRawAsync(new RemoveEntitiesPacket
                     {
                         EntityIds = [_ctx.EntityId]
                     }, _ctx.Uuid);
 
-                    // Remove the player's physics tracking body.
                     _physics.Unregister(_ctx.EntityId);
                 }
                 catch
@@ -290,6 +438,7 @@ namespace FunCraft.Network.Connections
                 }
 
                 await _persistGate.WaitAsync();
+
                 try
                 {
                     await _players.SaveAsync(new global::FunCraft.Data.Players.PlayerRecord
@@ -302,6 +451,7 @@ namespace FunCraft.Network.Connections
                         Yaw = _ctx.Yaw,
                         Pitch = _ctx.Pitch,
                     });
+
                     await _inventory.SaveInventoryAsync(_ctx.Uuid, _ctx.Inventory.AsMemory());
                     await _sessions.EndAsync(_ctx.Uuid, DateTimeOffset.UtcNow);
                 }
@@ -318,8 +468,28 @@ namespace FunCraft.Network.Connections
             _socket.Shutdown(SocketShutdown.Both);
             _socket.Dispose();
             _sendChannel.Writer.TryComplete();
+            _movementWake.Writer.TryComplete();
             await _pipe.Reader.CompleteAsync();
             await _pipe.Writer.CompleteAsync();
+        }
+
+        // ─── IPacketSender ────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Closes the socket so all three async loops (FillPipe, ReadPipe, Drain)
+        /// exit immediately. Called when the reliable send channel is full — the
+        /// client is not reading fast enough to be kept alive.
+        /// </summary>
+        private void CloseConnection()
+        {
+            if (Interlocked.Exchange(ref _closed, 1) == 0)
+            {
+                try
+                {
+                    _socket.Close();
+                }
+                catch { }
+            }
         }
 
         public ValueTask SendAsync(IPacket packet, CancellationToken ct)
@@ -335,20 +505,98 @@ namespace FunCraft.Network.Connections
             writer.WriteVarInt(packet.PacketId);
             packet.Write(buf.AsSpan(writer.BytesWritten), out _);
 
-            _sendChannel.Writer.TryWrite(buf.AsMemory());
+            if (!_sendChannel.Writer.TryWrite(buf.AsMemory()))
+            {
+                CloseConnection();
+            }
+
             return ValueTask.CompletedTask;
         }
 
         public ValueTask SendRawAsync(ReadOnlyMemory<byte> framed, CancellationToken ct)
         {
-            var copy = framed.ToArray();
-            _sendChannel.Writer.TryWrite(copy.AsMemory());
+            if (System.Runtime.InteropServices.MemoryMarshal.TryGetArray(framed, out _))
+            {
+                if (!_sendChannel.Writer.TryWrite(framed))
+                {
+                    CloseConnection();
+                }
+            }
+            else
+            {
+                if (!_sendChannel.Writer.TryWrite(framed.ToArray().AsMemory()))
+                {
+                    CloseConnection();
+                }
+            }
+
             return ValueTask.CompletedTask;
         }
 
         public void EnqueueRaw(ReadOnlyMemory<byte> framed)
         {
-            _sendChannel.Writer.TryWrite(framed);
+            if (!_sendChannel.Writer.TryWrite(framed))
+            {
+                CloseConnection();
+            }
+        }
+
+        // Standard CAS-loop max for int — Interlocked.Max(int) does not exist in .NET.
+        private static void InterlockedSetIfGreater(ref int location, int value)
+        {
+            int current;
+
+            do
+            {
+                current = Volatile.Read(ref location);
+
+                if (current >= value)
+                {
+                    return;
+                }
+            }
+            while (Interlocked.CompareExchange(ref location, value, current) != current);
+        }
+
+        public void EnqueueMovementFrame(int movementKey, byte[] frame)
+        {
+            // Pure Volatile.Write — no lock, no allocation, no CAS.
+            // byte[] is a reference type: reference writes are naturally atomic
+            // on all .NET-supported architectures. Volatile.Write adds the release
+            // fence so DrainAsync's Interlocked.Exchange (full fence) sees the write.
+            //
+            // Concurrent writes to the same slot are safe: the latest write wins,
+            // which is exactly correct for supersession semantics.
+            if (movementKey >= 0)
+            {
+                if (movementKey >= MovementSlotCount)
+                {
+                    return;
+                }
+
+                Volatile.Write(ref _bodySlots[movementKey], frame);
+                InterlockedSetIfGreater(ref _bodyHighWater, movementKey + 1);
+            }
+            else
+            {
+                var idx = ~movementKey;
+
+                if (idx >= MovementSlotCount)
+                {
+                    return;
+                }
+
+                Volatile.Write(ref _headSlots[idx], frame);
+                InterlockedSetIfGreater(ref _headHighWater, idx + 1);
+            }
+
+            // Signal DrainAsync at most once per drain cycle.
+            // The Interlocked gate means TryWrite is called ≤1 time between each
+            // pair of Volatile.Write(ref _movementPending, 0) calls in DrainAsync.
+            if (Interlocked.Exchange(ref _movementPending, 1) == 0)
+            {
+                _movementWake.Writer.TryWrite(0);
+            }
         }
     }
 }

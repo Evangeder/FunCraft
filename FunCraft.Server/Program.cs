@@ -7,6 +7,8 @@ namespace FunCraft.Server
 {
     using Data;
     using Network.Commands;
+    using Network.Entities;
+    using Network.Physics;
     using Network.Players;
     using Network.Server;
     using Protocol.Properties;
@@ -35,8 +37,11 @@ namespace FunCraft.Server
 
                     services.AddSingleton<IWorldSource, FlatWorldGenerator>();
                     services.AddSingleton<IPlayerRegistry, PlayerRegistry>();
-
-                    // Build the command dispatcher with all commands registered.
+                    services.AddSingleton<IEntityManager, EntityManager>();
+                    services.AddSingleton<ICollisionProvider, WorldCollisionProvider>();
+                    services.AddSingleton<PhysicsEngine>();
+                    services.AddSingleton<IPhysicsEngine>(sp => sp.GetRequiredService<PhysicsEngine>());
+                    services.AddHostedService(sp => sp.GetRequiredService<PhysicsEngine>());
                     services.AddSingleton(sp =>
                     {
                         var dispatcher = new CommandDispatcher();

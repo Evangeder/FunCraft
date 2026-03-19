@@ -12,7 +12,9 @@ namespace FunCraft.Network.Connections
     using Data.Players;
     using Data.Sessions;
     using Data.Inventory;
+    using Entities;
     using Handlers;
+    using Physics;
     using Players;
     using Protocol.IO;
     using Protocol.Packets;
@@ -42,6 +44,8 @@ namespace FunCraft.Network.Connections
         private readonly IInventoryRepository _inventory;
         private readonly ISessionStore _sessions;
         private readonly IPlayerRegistry _registry;
+        private readonly IEntityManager _entities;
+        private readonly IPhysicsEngine _physics;
 
         private readonly HandshakeHandler _handshakeHandler;
         private readonly StatusHandler _statusHandler;
@@ -52,13 +56,17 @@ namespace FunCraft.Network.Connections
         private ConnectionState _connectionState = ConnectionState.Handshaking;
 
         public ClientConnection(Socket socket, IWorldSource world, IPlayerRepository players, IInventoryRepository inventory,
-            ISessionStore sessions, IPlayerRegistry registry, CommandDispatcher commands, ReadOnlyMemory<byte> welcomeMessage, string[] motd, int maxPlayers)
+            ISessionStore sessions, IPlayerRegistry registry, CommandDispatcher commands,
+            ReadOnlyMemory<byte> welcomeMessage, string[] motd, int maxPlayers,
+            IEntityManager entities, IPhysicsEngine physics)
         {
             _socket = socket;
             _players = players;
             _inventory = inventory;
             _sessions = sessions;
             _registry = registry;
+            _entities = entities;
+            _physics = physics;
 
             _ctx = new PlayerContext
             {
@@ -69,7 +77,7 @@ namespace FunCraft.Network.Connections
             _statusHandler = new StatusHandler(motd, maxPlayers, registry) { Sender = this };
             _loginHandler = new LoginHandler(_ctx, sessions) { Sender = this };
             _configurationHandler = new ConfigurationHandler { Sender = this };
-            _playHandler = new PlayHandler(world, _ctx, players, inventory, registry, commands, welcomeMessage) { Sender = this };
+            _playHandler = new PlayHandler(world, _ctx, players, inventory, registry, commands, welcomeMessage, entities, physics) { Sender = this };
         }
 
         public async Task RunAsync(CancellationToken ct)
@@ -266,10 +274,19 @@ namespace FunCraft.Network.Connections
                     {
                         Uuids = [_ctx.Uuid]
                     }, _ctx.Uuid);
+
+                    // Remove this player's entity from every other client's world.
+                    await _registry.BroadcastRawAsync(new RemoveEntitiesPacket
+                    {
+                        EntityIds = [_ctx.EntityId]
+                    }, _ctx.Uuid);
+
+                    // Remove the player's physics tracking body.
+                    _physics.Unregister(_ctx.EntityId);
                 }
                 catch
                 {
-                     /* server may be shutting down */
+                    /* server may be shutting down */
                 }
 
                 await _persistGate.WaitAsync();

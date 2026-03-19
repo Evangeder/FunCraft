@@ -1,4 +1,6 @@
-﻿using FunCraft.Protocol.Registry;
+﻿using FunCraft.Network.Entities;
+using FunCraft.Network.Physics;
+using FunCraft.Protocol.Registry;
 
 namespace FunCraft.Network.Commands
 {
@@ -8,24 +10,26 @@ namespace FunCraft.Network.Commands
     using Protocol.Packets.Play.Outgoing;
 
     /// <summary>
-    /// /give &lt;item&gt; — puts 64x of the named item in hotbar slot 0.
+    /// /give &lt;item&gt; — spawns a max-stack of the named item at the player's feet
+    /// with zero velocity and no pickup cooldown, so it's collected instantly on
+    /// the next movement tick.
     /// </summary>
-    public sealed class GiveCommand(PlayerContext ctx) : ICommand
+    public sealed class GiveCommand(
+        PlayerContext ctx,
+        IEntityManager entities,
+        IPhysicsEngine physics) : ICommand
     {
         public ReadOnlySpan<byte> Name => "give"u8;
         public ReadOnlySpan<byte> Description => "Gives you a stack of the specified item."u8;
 
-        private const int HotbarSlot0 = 36;
-        private const int StackSize = 64;
-
         private static readonly byte[] MsgNoArgs = "§cUsage: /give <item>"u8.ToArray();
         private static readonly byte[] MsgInvalidItem = "§cUnknown item: "u8.ToArray();
-        private static readonly byte[] MsgGivenPrefix = "§aGiven 64x "u8.ToArray();
-
-        // Namespace prefix applied when the argument contains no ':'.
+        private static readonly byte[] MsgGivenPrefix = "§aGiven "u8.ToArray();
+        private static readonly byte[] MsgGivenSuffix = "x "u8.ToArray();
         private static readonly byte[] DefaultNamespace = "minecraft:"u8.ToArray();
 
-        public async Task ExecuteAsync(ReadOnlyMemory<byte> args, Func<ReadOnlyMemory<byte>, Task> respond,
+        public async Task ExecuteAsync(ReadOnlyMemory<byte> args,
+            Func<ReadOnlyMemory<byte>, Task> respond,
             IPacketSender sender, CancellationToken ct)
         {
             var argSpan = args.Span;
@@ -57,18 +61,59 @@ namespace FunCraft.Network.Commands
                 return;
             }
 
-            ctx.Inventory[HotbarSlot0] = new InventorySlot(itemId, StackSize);
+            var stackSize = ItemStackTable.GetMaxStack(fullName);
 
-            await sender.SendAsync(new SetContainerSlotPacket
+            // Spawn at the player's feet. Zero velocity, instantPickup=true so
+            // there's no 500 ms cooldown — the next movement packet picks it up.
+            var item = entities.SpawnItem(itemId, stackSize,
+                ctx.X, ctx.Y, ctx.Z,
+                instantPickup: true);
+
+            // No physics — item is already on the ground at the player's feet.
+            item.MarkSettled();
+
+            // Broadcast the spawn to all connected clients so they see the entity.
+            // PlayHandler.BroadcastSpawnItemAsync is internal, so we send directly
+            // to each player via the registry. The caller's own client will also
+            // see the entity briefly before the pickup packet removes it.
+            // We don't have direct access to registry here, so instead we fire a
+            // targeted spawn to the caller and let pickup handle the rest.
+            await sender.SendAsync(new BundleDelimiterPacket(), ct);
+            await sender.SendAsync(new SpawnEntityPacket
             {
-                WindowId = 0,
-                StateId = 0,
-                Slot = HotbarSlot0,
-                ItemId = itemId,
-                Count = StackSize,
+                EntityId = item.EntityId,
+                EntityUuid = item.Uuid,
+                EntityType = EntityTypeIds.Item,
+                X = item.X,
+                Y = item.Y,
+                Z = item.Z,
+                VelocityX = 0,
+                VelocityY = 0,
+                VelocityZ = 0,
+                Yaw = 0,
+                Pitch = 0,
+                HeadYaw = 0,
             }, ct);
+            await sender.SendAsync(new SetEntityMetadataPacket
+            {
+                EntityId = item.EntityId,
+                ItemId = itemId,
+                Count = stackSize,
+            }, ct);
+            await sender.SendAsync(new BundleDelimiterPacket(), ct);
 
-            await respond(Concat(MsgGivenPrefix, fullName));
+            Span<byte> countBytes = stackalloc byte[3];
+            var countLen = WriteAsciiInt(countBytes, stackSize);
+            await respond(Concat4(MsgGivenPrefix, countBytes[..countLen], MsgGivenSuffix, fullName));
+        }
+
+        private static int WriteAsciiInt(Span<byte> buf, int value)
+        {
+            if (value == 0) { buf[0] = (byte)'0'; return 1; }
+            var len = 0;
+            while (value > 0) { buf[len++] = (byte)('0' + value % 10); value /= 10; }
+            buf[..len].Reverse();
+            return len;
         }
 
         private static byte[] Concat(ReadOnlySpan<byte> a, ReadOnlySpan<byte> b)
@@ -76,6 +121,17 @@ namespace FunCraft.Network.Commands
             var result = new byte[a.Length + b.Length];
             a.CopyTo(result);
             b.CopyTo(result.AsSpan(a.Length));
+            return result;
+        }
+
+        private static byte[] Concat4(ReadOnlySpan<byte> a, ReadOnlySpan<byte> b,
+            ReadOnlySpan<byte> c, ReadOnlySpan<byte> d)
+        {
+            var result = new byte[a.Length + b.Length + c.Length + d.Length];
+            a.CopyTo(result);
+            b.CopyTo(result.AsSpan(a.Length));
+            c.CopyTo(result.AsSpan(a.Length + b.Length));
+            d.CopyTo(result.AsSpan(a.Length + b.Length + c.Length));
             return result;
         }
     }

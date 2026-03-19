@@ -1,10 +1,12 @@
 ﻿using FunCraft.Data.Inventory;
+using FunCraft.Network.Entities;
 using System.Net;
 
 namespace FunCraft.Network.Players
 {
     public sealed class PlayerContext
     {
+        public int EntityId { get; } = EntityIdSource.Next();
         public ReadOnlyMemory<byte> Username { get; set; } = ReadOnlyMemory<byte>.Empty;
         public Guid Uuid { get; set; }
         public IPAddress? IpAddress { get; set; }

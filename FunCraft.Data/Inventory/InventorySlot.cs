@@ -1,7 +1,7 @@
 ﻿namespace FunCraft.Data.Inventory
 {
     /// <summary>
-    /// One inventory slot: an item protocol ID and a stack count.
+    /// One inventory slot: item protocol ID, stack count, and remaining durability.
     /// <br/>Wire slot indices for window 0 (player inventory):
     /// <br/> * 0        crafting output
     /// <br/> * 1–4      crafting grid (2×2)
@@ -13,11 +13,14 @@
     /// </summary>
     /// <param name="ItemId">Protocol ID of the item (0 = empty).</param>
     /// <param name="Count">Stack size (1–99). Ignored when ItemId is 0.</param>
-    public readonly record struct InventorySlot(int ItemId, int Count)
+    /// <param name="Durability">
+    /// Remaining uses. 0 means either the item is not a tool (indestructible) or it
+    /// has broken and should be removed. Use <see cref="MaxDurability"/> to
+    /// distinguish — if that is also 0 the item simply has no durability model.
+    /// </param>
+    public readonly record struct InventorySlot(int ItemId, int Count, int Durability = 0)
     {
-        /// <summary>
-        /// Total number of window-0 slots tracked server-side.
-        /// </summary>
+        /// <summary>Total number of window-0 slots tracked server-side.</summary>
         public const int InventorySize = 46;
 
         public static readonly InventorySlot Empty = default;

@@ -111,5 +111,76 @@ namespace FunCraft.Protocol.IO
             BinaryPrimitives.WriteInt16BigEndian(_buffer[BytesWritten..], value);
             BytesWritten += sizeof(short);
         }
+
+        /// <summary>
+        /// Writes a velocity vector using the LpVec3 format introduced in 1.21.2.
+        /// Zero-velocity fast path: 1 byte. Normal path: 6 bytes + optional VarInt continuation.
+        /// </summary>
+        public void WriteLpVec3(double vx, double vy, double vz)
+        {
+            const double threshold = 3.051944088384301e-5;
+            const double maxQuantized = 32766.0;
+
+            var maxCoordinate = Math.Max(Math.Abs(vx), Math.Max(Math.Abs(vy), Math.Abs(vz)));
+
+            if (maxCoordinate < threshold)
+            {
+                _buffer[BytesWritten++] = 0;
+                return;
+            }
+
+            var maxCoordinateI = (long)maxCoordinate;
+            var scaleFactor = maxCoordinate > (double)maxCoordinateI
+                ? maxCoordinateI + 1L
+                : maxCoordinateI;
+
+            var needContinuation = (scaleFactor & 3L) != scaleFactor;
+            var packedScale = needContinuation ? (scaleFactor & 3L) | 4L : scaleFactor;
+
+            var packedX = Pack(vx / (double)scaleFactor) << 3;
+            var packedY = Pack(vy / (double)scaleFactor) << 18;
+            var packedZ = Pack(vz / (double)scaleFactor) << 33;
+            var packed = packedZ | packedY | packedX | packedScale;
+
+            _buffer[BytesWritten++] = (byte)packed;
+            _buffer[BytesWritten++] = (byte)(packed >> 8);
+
+            BinaryPrimitives.WriteInt32BigEndian(_buffer[BytesWritten..], (int)(packed >> 16));
+            BytesWritten += sizeof(int);
+
+            if (needContinuation)
+            {
+                BytesWritten += VarInt.Write(_buffer[BytesWritten..], (int)(scaleFactor >> 2));
+            }
+
+            return;
+
+            static long Pack(double v) =>
+                (long)Math.Round((v * 0.5 + 0.5) * maxQuantized);
+        }
+
+        /// <summary>
+        /// Returns the wire size in bytes that <see cref="WriteLpVec3"/> will produce
+        /// for the given velocity vector.
+        /// </summary>
+        public static int LpVec3Size(double vx, double vy, double vz)
+        {
+            const double threshold = 3.051944088384301e-5;
+            var maxCoordinate = Math.Max(Math.Abs(vx), Math.Max(Math.Abs(vy), Math.Abs(vz)));
+            if (maxCoordinate < threshold)
+            {
+                return 1;
+            }
+
+            var maxCoordinateI = (long)maxCoordinate;
+            var scaleFactor = maxCoordinate > (double)maxCoordinateI
+                ? maxCoordinateI + 1L
+                : maxCoordinateI;
+
+            var needContinuation = (scaleFactor & 3L) != scaleFactor;
+            return needContinuation
+                ? 6 + VarInt.GetSize((int)(scaleFactor >> 2))
+                : 6;
+        }
     }
 }

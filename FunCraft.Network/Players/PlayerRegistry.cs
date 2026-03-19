@@ -21,6 +21,9 @@ namespace FunCraft.Network.Players
         public IReadOnlyList<ConnectedPlayer> GetAll() =>
             [.. _players.Values];
 
+        public ConnectedPlayer? TryGet(Guid uuid) =>
+            _players.GetValueOrDefault(uuid);
+
         public async Task BroadcastAsync(IPacket packet, CancellationToken ct = default) =>
             await BroadcastAsync(packet, excludeUuid: Guid.Empty, ct);
 
@@ -39,7 +42,7 @@ namespace FunCraft.Network.Players
                 }
                 catch
                 {
-                     /* player disconnected mid-broadcast — skip */
+                    /* player disconnected mid-broadcast — skip */
                 }
             }
         }
@@ -70,7 +73,7 @@ namespace FunCraft.Network.Players
                 }
                 catch
                 {
-                     /* player disconnected */
+                    /* player disconnected */
                 }
             }
 

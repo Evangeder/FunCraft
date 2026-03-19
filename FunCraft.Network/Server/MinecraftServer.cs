@@ -7,16 +7,19 @@ using System.Text;
 
 namespace FunCraft.Network.Server
 {
-    using FunCraft.World;
     using Commands;
     using Connections;
+    using Data.Inventory;
     using Data.Players;
     using Data.Sessions;
-    using Data.Inventory;
+    using Entities;
+    using FunCraft.World;
+    using Physics;
     using Players;
 
     public class MinecraftServer(IConfiguration config, ILogger<MinecraftServer> logger, IWorldSource world, IPlayerRepository players,
-        IInventoryRepository inventory, ISessionStore sessions, IPlayerRegistry registry, CommandDispatcher commands) : BackgroundService
+        IInventoryRepository inventory, ISessionStore sessions, IPlayerRegistry registry, CommandDispatcher commands,
+        IEntityManager entities, IPhysicsEngine physics) : BackgroundService
     {
         private readonly int _port = int.Parse(config["Server:Port"] ?? "25565");
         private readonly string _serverName = config["Server:Name"] ?? "FunCraft";
@@ -53,7 +56,7 @@ namespace FunCraft.Network.Server
         private async Task HandleConnectionAsync(Socket socket, CancellationToken ct)
         {
             await using var connection = new ClientConnection(
-                socket, world, players, inventory, sessions, registry, commands, _welcomeMessage, _motd, _maxPlayers);
+                socket, world, players, inventory, sessions, registry, commands, _welcomeMessage, _motd, _maxPlayers, entities, physics);
             await connection.RunAsync(ct);
         }
 

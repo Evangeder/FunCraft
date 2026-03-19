@@ -8,5 +8,6 @@
         public ReadOnlyMemory<byte> Username { get; } = username;
         public IPacketSender Sender { get; } = sender;
         public PlayerContext Context { get; } = context;
+        public int EntityId => Context.EntityId;
     }
 }

@@ -79,10 +79,6 @@ namespace FunCraft.Network.Handlers
         private readonly HashSet<(int, int)> _loadedChunks = [];
         private readonly SemaphoreSlim _chunkLock = new(1, 1);
 
-        private double _prevBroadcastX;
-        private double _prevBroadcastY;
-        private double _prevBroadcastZ;
-
         // Set in OnEnterAsync; used to feed the movement history for anti-cheat.
         private PlayerPhysicsBody? _playerBody;
 
@@ -104,10 +100,6 @@ namespace FunCraft.Network.Handlers
                 ctx.Y = DefaultSpawnY;
                 ctx.Z = DefaultSpawnZ;
             }
-
-            _prevBroadcastX = ctx.X;
-            _prevBroadcastY = ctx.Y;
-            _prevBroadcastZ = ctx.Z;
 
             // Register player tracking body. Records movement history each tick
             // for future anti-cheat validation.

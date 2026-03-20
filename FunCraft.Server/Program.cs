@@ -42,6 +42,7 @@ namespace FunCraft.Server
                     services.AddSingleton<PhysicsEngine>();
                     services.AddSingleton<IPhysicsEngine>(sp => sp.GetRequiredService<PhysicsEngine>());
                     services.AddHostedService(sp => sp.GetRequiredService<PhysicsEngine>());
+                    services.AddHostedService<PlayerPositionBroadcaster>();
                     services.AddSingleton(sp =>
                     {
                         var dispatcher = new CommandDispatcher();

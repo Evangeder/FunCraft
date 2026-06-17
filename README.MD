@@ -1,6 +1,3 @@
-# Disclaimer
-This project was made in order to revise myself a lot of backend programming in order to land a job i want. If you want to commit to it, please create new branch and do pull requests.
-
 # FunCraft
 FunCraft is a custom Minecraft Java Edition server written from scratch in C# on .NET 10.
 
@@ -60,13 +57,13 @@ The project is currently in the early protocol-first stage. Core networking, pac
   - server list ping
   - initial Configuration and Play bootstrap flow
 
-- [ ] **Phase 3 — Session and player lifecycle**
+- [x] **Phase 3 — Session and player lifecycle**
   - Redis-backed sessions
   - player registry
   - more complete Login → Play handshake
   - stronger connection/session validation
 
-- [ ] **Phase 4 — World and persistence**
+- [x] **Phase 4 — World and persistence**
   - expand the game world model
   - evolve the chunk system beyond the current bootstrap implementation
   - PostgreSQL-backed persistence
